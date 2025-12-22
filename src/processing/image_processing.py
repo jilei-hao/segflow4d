@@ -41,6 +41,7 @@ def create_tp_images(image4d: sitk.Image, target_timepoints: list[int], resample
     image_helper = create_image_helper()
 
     for t in target_timepoints:
+        print(f"Extracting timepoint {t}...")
         extractor = sitk.ExtractImageFilter()
         size = list(image4d.GetSize())
         size[3] = 0  # Extract along the time dimension

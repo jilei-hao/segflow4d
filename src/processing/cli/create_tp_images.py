@@ -18,5 +18,6 @@ def main():
         resample_factor=args.resample_factor
     )
     for t, tp_image_group in tp_images.items():
+        print(f"Writing out timepoint {t}...")
         sitk.WriteImage(tp_image_group.image_fullres.get_data(), f"{args.output_dir}/i3-fullres_tp-{t:03d}.nii.gz")
         sitk.WriteImage(tp_image_group.image_lowres.get_data(), f"{args.output_dir}/i3-lowres_tp-{t:03d}.nii.gz")
