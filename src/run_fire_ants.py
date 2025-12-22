@@ -32,13 +32,13 @@ def main():
     print(f"Using device: {batch1().device}")
     
     # Print coordinate transformation matrices
-    print("\nCoordinate transformation matrices:")
-    print("phy2torch:")
-    print(image1.phy2torch)
-    print("\ntorch2phy:")
-    print(image1.torch2phy)
-    print("\nphy2torch @ torch2phy:")
-    print(image1.phy2torch @ image1.torch2phy)
+    # print("\nCoordinate transformation matrices:")
+    # print("phy2torch:")
+    # print(image1.phy2torch)
+    # print("\ntorch2phy:")
+    # print(image1.torch2phy)
+    # print("\nphy2torch @ torch2phy:")
+    # print(image1.phy2torch @ image1.torch2phy)
     
     # Perform affine registration
     print("\nPerforming affine registration...")
