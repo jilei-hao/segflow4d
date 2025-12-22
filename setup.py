@@ -24,11 +24,13 @@ setup(
 		"SimpleITK",
 		"fireants",
 		"matplotlib",
+        "vtk",
 	],
 	entry_points={
 		"console_scripts": [
 			"run-fire-ants=run_fire_ants:main",
             "create-reference-mask=processing.cli.create_reference_mask:main",
+            "create-tp-images=processing.cli.create_tp_images:main",
 		],
 	},
 )

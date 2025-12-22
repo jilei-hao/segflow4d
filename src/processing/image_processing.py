@@ -1,6 +1,8 @@
 import SimpleITK as sitk
 from utility.image_helper.image_helper_factory import create_image_helper
 from common.types.interpolation_type import InterpolationType
+from common.types.tp_image_group import TPImageGroup
+from common.types.image_wrapper import ImageWrapper
 
 def create_reference_mask(seg_ref_image: sitk.Image, resample_factor: float, dilation_radius: int) -> sitk.Image:
     """
@@ -22,3 +24,31 @@ def create_reference_mask(seg_ref_image: sitk.Image, resample_factor: float, dil
     dilated_mask = image_helper.binary_dilate(binary_mask, radius=dilation_radius)
 
     return dilated_mask
+
+def create_tp_images(image4d: sitk.Image, target_timepoints: list[int], resample_factor: float) -> dict[int, TPImageGroup]:
+    """
+    Generate 3D images for specified timepoints from a 4D image.
+
+    Args:
+        image4d (sitk.Image): The input 4D image.
+        target_timepoints (list[int]): List of timepoints to extract.
+
+    Returns:
+        dict[int, sitk.Image]: A dictionary mapping timepoints to their corresponding 3D images.
+    """
+
+    tp_images = {}  
+    image_helper = create_image_helper()
+
+    for t in target_timepoints:
+        extractor = sitk.ExtractImageFilter()
+        size = list(image4d.GetSize())
+        size[3] = 0  # Extract along the time dimension
+        index = [0, 0, 0, t - 1]  # Timepoint index (0-based)
+        extractor.SetSize(size)
+        extractor.SetIndex(index)
+        tp_image = extractor.Execute(image4d)
+        tp_image_lowres = image_helper.resample(tp_image, resample_factor=resample_factor, interpolation=InterpolationType.LINEAR)
+        tp_images[t] = TPImageGroup(image_fullres=ImageWrapper(tp_image), image_lowres=ImageWrapper(tp_image_lowres))
+
+    return tp_images
