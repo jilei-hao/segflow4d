@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from common.types.tp_image_group import TPImageGroup
 
 @dataclass
-class PropagationTPData:
+class TPData:
     '''
     A class representing data used during propagation at a specific timepoint.
     '''
