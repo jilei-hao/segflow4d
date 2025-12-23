@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from .tp_partition_input_group import TPPartitionInputGroup
-from .tp_partition_output_group import TPPartitionOutputGroup
+from .tp_partition_input import TPPartitionInputGroup
+from .tp_partition_output import TPPartitionOutputGroup
 from typing import Optional
 
 @dataclass

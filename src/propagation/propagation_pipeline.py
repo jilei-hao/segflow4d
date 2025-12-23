@@ -1,5 +1,5 @@
 from common.types.propagation_input import PropagationInput
-from common.types.tp_partition_input_group import TPPartitionInputGroup
+from common.types.tp_partition_input import TPPartitionInputGroup
 from common.types.tp_partition import TPPartition
 import processing.image_processing as img_proc
 

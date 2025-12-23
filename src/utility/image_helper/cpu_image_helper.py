@@ -36,3 +36,19 @@ class CPUImageHelper(AbstractImageHelper):
         dilate_filter.SetKernelRadius(radius)
         dilate_filter.SetForegroundValue(1)
         return dilate_filter.Execute(image)
+    
+
+    def resample_to_reference(self, image: sitk.Image, reference_image: sitk.Image, interpolation: InterpolationType) -> sitk.Image:
+        resample_filter = sitk.ResampleImageFilter()
+        resample_filter.SetSize(reference_image.GetSize())
+        resample_filter.SetOutputSpacing(reference_image.GetSpacing())
+        resample_filter.SetOutputDirection(reference_image.GetDirection())
+        resample_filter.SetOutputOrigin(reference_image.GetOrigin())
+        resample_filter.SetInterpolator(sitk_interpolation_from_type(interpolation))
+
+        resampled = resample_filter.Execute(image)
+        
+        # Preserve original pixel type
+        cast_filter = sitk.CastImageFilter()
+        cast_filter.SetOutputPixelType(image.GetPixelID())
+        return cast_filter.Execute(resampled)

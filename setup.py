@@ -28,9 +28,10 @@ setup(
 	],
 	entry_points={
 		"console_scripts": [
-			"run-fire-ants=run_fire_ants:main",
+			"run-fireants=registration.fireants.run_fireants:main",
             "create-reference-mask=processing.cli.create_reference_mask:main",
             "create-tp-images=processing.cli.create_tp_images:main",
+            "resample-to-reference=processing.cli.resample_to_reference:main",
 		],
 	},
 )

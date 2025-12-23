@@ -14,3 +14,7 @@ class AbstractImageHelper(ABC):
     @abstractmethod
     def binary_dilate(self, image: sitk.Image, radius: int) -> sitk.Image:
         pass
+
+    @abstractmethod
+    def resample_to_reference(self, image: sitk.Image, reference_image: sitk.Image, interpolation: InterpolationType) -> sitk.Image:
+        pass

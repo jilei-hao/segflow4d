@@ -4,7 +4,7 @@ from .image_wrapper import ImageWrapper
 from typing import Optional
 
 @dataclass
-class TPPartitionInputGroup:
+class TPPartitionInput:
     '''
     A class representing group of inputs for running propagation on one partition of all the timepoints.
     '''
