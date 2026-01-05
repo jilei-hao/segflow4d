@@ -8,7 +8,12 @@ class PropagationOptions:
     '''
     lowres_resample_factor: float
     dilation_radius: int
-    registration_backend_options: dict[str, Any] = field(default_factory=dict)
+    registration_backend: str
+    registration_backend_options: dict[str, Any] = field(default_factory=dict) # options specific to the registration backend
+    write_result_to_disk: bool = False
+    output_directory: str = ""
+    debug: bool = False
+    debug_output_directory: str = ""
 
     def __post_init__(self):
         pass

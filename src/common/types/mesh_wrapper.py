@@ -1,5 +1,5 @@
 from vtkmodules.vtkCommonDataModel import vtkPolyData
-from .propagation_object import PropagationDataObject
+from .propagation_data_object import PropagationDataObject
 
 class MeshWrapper(PropagationDataObject):
     def __init__(self, mesh: vtkPolyData):

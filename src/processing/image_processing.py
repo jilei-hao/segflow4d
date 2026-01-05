@@ -4,7 +4,7 @@ from common.types.interpolation_type import InterpolationType
 from common.types.tp_image_group import TPImageGroup
 from common.types.image_wrapper import ImageWrapper
 
-def create_reference_mask(seg_ref_image: sitk.Image, resample_factor: float, dilation_radius: int) -> sitk.Image:
+def create_reference_mask(seg_ref_image: ImageWrapper, resample_factor: float, dilation_radius: int) -> ImageWrapper:
     """
     Create a reference mask by resampling the segmentation reference image.
 
@@ -25,16 +25,16 @@ def create_reference_mask(seg_ref_image: sitk.Image, resample_factor: float, dil
 
     return dilated_mask
 
-def create_tp_images(image4d: sitk.Image, target_timepoints: list[int], resample_factor: float) -> dict[int, TPImageGroup]:
+def create_tp_images(image4d: ImageWrapper, target_timepoints: list[int], resample_factor: float) -> dict[int, TPImageGroup]:
     """
     Generate 3D images for specified timepoints from a 4D image.
 
     Args:
-        image4d (sitk.Image): The input 4D image.
+        image4d (ImageWrapper): The input 4D image.
         target_timepoints (list[int]): List of timepoints to extract.
 
     Returns:
-        dict[int, sitk.Image]: A dictionary mapping timepoints to their corresponding 3D images.
+        dict[int, TPImageGroup]: A dictionary mapping timepoints to their corresponding 3D image groups.
     """
 
     tp_images = {}  
@@ -43,13 +43,13 @@ def create_tp_images(image4d: sitk.Image, target_timepoints: list[int], resample
     for t in target_timepoints:
         print(f"Extracting timepoint {t}...")
         extractor = sitk.ExtractImageFilter()
-        size = list(image4d.GetSize())
+        size = list(image4d.get_data().GetSize())
         size[3] = 0  # Extract along the time dimension
         index = [0, 0, 0, t - 1]  # Timepoint index (0-based)
         extractor.SetSize(size)
         extractor.SetIndex(index)
-        tp_image = extractor.Execute(image4d)
-        tp_image_lowres = image_helper.resample(tp_image, resample_factor=resample_factor, interpolation=InterpolationType.LINEAR)
-        tp_images[t] = TPImageGroup(image_fullres=ImageWrapper(tp_image), image_lowres=ImageWrapper(tp_image_lowres))
+        tp_image = extractor.Execute(image4d.get_data())
+        tp_image_lowres = image_helper.resample(ImageWrapper(tp_image), resample_factor=resample_factor, interpolation=InterpolationType.LINEAR)
+        tp_images[t] = TPImageGroup(image_fullres=ImageWrapper(tp_image), image_lowres=tp_image_lowres)
 
     return tp_images

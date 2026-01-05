@@ -28,6 +28,7 @@ setup(
 	],
 	entry_points={
 		"console_scripts": [
+            "segflow4d=main:main",
 			"run-fireants=registration.fireants.run_fireants:main",
             "create-reference-mask=processing.cli.create_reference_mask:main",
             "create-tp-images=processing.cli.create_tp_images:main",

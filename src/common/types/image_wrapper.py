@@ -1,5 +1,5 @@
 from SimpleITK import Image
-from .propagation_object import PropagationDataObject
+from .propagation_data_object import PropagationDataObject
 
 class ImageWrapper(PropagationDataObject):
     def __init__(self, image: Image):
@@ -13,3 +13,5 @@ class ImageWrapper(PropagationDataObject):
 
     def set_data(self, data: Image):
         self._data = data
+
+    
