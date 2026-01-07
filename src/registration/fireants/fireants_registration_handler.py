@@ -1,9 +1,19 @@
 from registration.abstract_registration_handler import AbstractRegistrationHandler
-
 import logging
+import torch
+from time import time
+from fireants.io import Image, BatchedImages
+from fireants.registration.affine import AffineRegistration
+from fireants.registration.greedy import GreedyRegistration
+import SimpleITK as sitk
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 class FireantsRegistrationHandler(AbstractRegistrationHandler):
+    def __init__(self):
+        super().__init__()
+        logger.info("Initialized FireantsRegistrationHandler")
 
     def run_affine(self, img_fixed, img_moving, options):
         # Implementation of affine registration using Fireants
@@ -51,13 +61,6 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 - 'resliced_image': Warped img_to_reslice using deformation
                 - 'moved_moving': Moving image warped to fixed space
         """
-        import torch
-        from time import time
-        from fireants.io import Image, BatchedImages
-        from fireants.registration.affine import AffineRegistration
-        from fireants.registration.greedy import GreedyRegistration
-        import SimpleITK as sitk
-        import numpy as np
         
         logger.info("Starting registration and reslicing with FireANTs")
         
@@ -72,105 +75,141 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         deformation_type = options.get('deformation_type', 'compositive')
         smooth_grad_sigma = options.get('smooth_grad_sigma', 1.5)
         
-        # Convert input images to FireANTs format
-        logger.info("Converting images to FireANTs format...")
-        batch_fixed = BatchedImages([img_fixed])
-        batch_moving = BatchedImages([img_moving])
-        batch_to_reslice = BatchedImages([img_to_reslice])
+        # Initialize variables for cleanup in finally block
+        fa_image_fixed = None
+        fa_image_moving = None
+        fa_image_to_reslice = None
         
-        # Prepare loss kwargs
-        loss_kwargs = {}
-        if loss_type == 'cc':
-            loss_kwargs['cc_kernel_size'] = cc_kernel_size
-        
-        # Stage 1: Affine registration
-        logger.info("Starting affine registration...")
-        start_affine = time()
-        
-        affine_reg = AffineRegistration(
-            scales=scales,
-            iterations=affine_iterations,
-            fixed_images=batch_fixed,
-            moving_images=batch_moving,
-            loss_type=loss_type,
-            optimizer='Adam',
-            optimizer_lr=affine_lr,
-            **loss_kwargs
-        )
-        
-        affine_reg.optimize()
-        moved_affine = affine_reg.evaluate(batch_fixed, batch_moving)
-        end_affine = time()
-        logger.info(f"Affine registration completed in {end_affine - start_affine:.2f} seconds")
-        
-        # Get affine matrix before cleanup
-        affine_matrix = affine_reg.get_affine_matrix().detach().clone()
-        del affine_reg
-        torch.cuda.empty_cache()
-        
-        # Stage 2: Deformable registration with affine initialization
-        logger.info("Starting deformable registration...")
-        start_deformable = time()
-        
-        deformable_reg = GreedyRegistration(
-            scales=scales,
-            iterations=deformable_iterations,
-            fixed_images=batch_fixed,
-            moving_images=batch_moving,
-            deformation_type=deformation_type,
-            smooth_grad_sigma=smooth_grad_sigma,
-            loss_type=loss_type,
-            optimizer='adam',
-            optimizer_lr=deformable_lr,
-            init_affine=affine_matrix,
-            **loss_kwargs
-        )
-        
-        deformable_reg.optimize()
-        end_deformable = time()
-        logger.info(f"Deformable registration completed in {end_deformable - start_deformable:.2f} seconds")
-        
-        # Stage 3: Reslice target image using deformation
-        logger.info("Reslicing target image...")
-        moved_resliced = deformable_reg.evaluate(batch_fixed, batch_to_reslice)
-        
-        # Convert resliced image back to original format
-        resliced_tensor = moved_resliced[0].detach()
-        resliced_np = resliced_tensor.cpu().numpy()
-        
-        # Handle segmentation (threshold) vs continuous image
-        if img_to_reslice.itk_image is not None:
-            itk_original = img_to_reslice.itk_image
-            
-            if resliced_tensor.shape[0] == 1:
-                # Binary segmentation - threshold at 0.5
-                resliced_labels = (resliced_np[0] > 0.5).astype('uint8')
-            else:
-                # Multi-class - take argmax
-                resliced_labels = np.argmax(resliced_np, axis=0).astype('uint8')
-            
-            resliced_itk = sitk.GetImageFromArray(resliced_labels)
-            resliced_itk.SetSpacing(itk_original.GetSpacing())
-            resliced_itk.SetOrigin(itk_original.GetOrigin())
-            resliced_itk.SetDirection(itk_original.GetDirection())
-        else:
-            # Continuous image - use as is
-            resliced_itk = sitk.GetImageFromArray(resliced_np[0] if resliced_np.shape[0] == 1 else resliced_np)
-        
-        # Mesh reslicing to be implemented
-        resliced_mesh = None
-        if mesh_to_reslice is not None:
-            logger.warning("Mesh reslicing not yet implemented")
-        
-        logger.info("Registration and reslicing completed successfully")
-        
-        return {
-            'affine_matrix': affine_matrix,
-            'resliced_image': resliced_itk,
-            'resliced_mesh': resliced_mesh,
-            'moved_moving': moved_affine[0].detach().cpu().numpy()
-        }
+        try:
+            # Convert input images to FireANTs format
+            logger.info("Converting images to FireANTs format...")
+            fa_image_fixed = Image(img_fixed.get_data())
+            fa_image_moving = Image(img_moving.get_data())
+            fa_image_to_reslice = Image(img_to_reslice.get_data())
 
+            batch_fixed = BatchedImages([fa_image_fixed])
+            batch_moving = BatchedImages([fa_image_moving])
+            batch_to_reslice = BatchedImages([fa_image_to_reslice])
+            
+            # Prepare loss kwargs
+            loss_kwargs = {}
+            if loss_type == 'cc':
+                loss_kwargs['cc_kernel_size'] = cc_kernel_size
+            
+            # Stage 1: Affine registration
+            logger.info("Starting affine registration...")
+            start_affine = time()
+            
+            affine_reg = AffineRegistration(
+                scales=scales,
+                iterations=affine_iterations,
+                fixed_images=batch_fixed,
+                moving_images=batch_moving,
+                loss_type=loss_type,
+                optimizer='Adam',
+                optimizer_lr=affine_lr,
+                **loss_kwargs
+            )
+            
+            affine_reg.optimize()
+            moved_affine = affine_reg.evaluate(batch_fixed, batch_moving)
+            end_affine = time()
+            logger.info(f"Affine registration completed in {end_affine - start_affine:.2f} seconds")
+            
+            # Get affine matrix before cleanup
+            affine_matrix = affine_reg.get_affine_matrix().detach().clone()
+            
+            # Clean up affine registration
+            del affine_reg
+            del batch_fixed
+            del batch_moving
+            torch.cuda.empty_cache()
+            
+            # Stage 2: Deformable registration with affine initialization
+            logger.info("Starting deformable registration...")
+            start_deformable = time()
+            
+            # Recreate batches for deformable registration
+            batch_fixed = BatchedImages([fa_image_fixed])
+            batch_to_reslice = BatchedImages([fa_image_to_reslice])
+            
+            deformable_reg = GreedyRegistration(
+                scales=scales,
+                iterations=deformable_iterations,
+                fixed_images=batch_fixed,
+                moving_images=BatchedImages([fa_image_moving]),
+                deformation_type=deformation_type,
+                smooth_grad_sigma=smooth_grad_sigma,
+                loss_type=loss_type,
+                optimizer='adam',
+                optimizer_lr=deformable_lr,
+                init_affine=affine_matrix,
+                **loss_kwargs
+            )
+            
+            deformable_reg.optimize()
+            end_deformable = time()
+            logger.info(f"Deformable registration completed in {end_deformable - start_deformable:.2f} seconds")
+            
+            # Stage 3: Reslice target image using deformation
+            logger.info("Reslicing target image...")
+            moved_resliced = deformable_reg.evaluate(batch_fixed, batch_to_reslice)
+            
+            # Extract data immediately and detach
+            moved_moving_np = moved_affine[0].detach().cpu().numpy().copy()
+            resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
+            
+            # Clean up deformable registration and batches
+            del deformable_reg
+            del moved_affine
+            del moved_resliced
+            del batch_fixed
+            del batch_to_reslice
+            torch.cuda.empty_cache()
+            
+            # Convert resliced image back to original format
+            # Handle segmentation (threshold) vs continuous image
+            if fa_image_to_reslice.itk_image is not None:
+                itk_original = fa_image_to_reslice.itk_image
+                
+                if resliced_tensor.shape[0] == 1:
+                    # Binary segmentation - threshold at 0.5
+                    resliced_labels = (resliced_tensor[0] > 0.5).astype('uint8')
+                else:
+                    # Multi-class - take argmax
+                    resliced_labels = np.argmax(resliced_tensor, axis=0).astype('uint8')
+                
+                resliced_itk = sitk.GetImageFromArray(resliced_labels)
+                resliced_itk.SetSpacing(itk_original.GetSpacing())
+                resliced_itk.SetOrigin(itk_original.GetOrigin())
+                resliced_itk.SetDirection(itk_original.GetDirection())
+            else:
+                # Continuous image - use as is
+                resliced_itk = sitk.GetImageFromArray(resliced_tensor[0] if resliced_tensor.shape[0] == 1 else resliced_tensor)
+            
+            # Mesh reslicing to be implemented
+            resliced_mesh = None
+            if mesh_to_reslice is not None:
+                logger.warning("Mesh reslicing not yet implemented")
+            
+            logger.info("Registration and reslicing completed successfully")
+            
+            return {
+                'affine_matrix': affine_matrix,
+                'resliced_image': resliced_itk,
+                'resliced_mesh': resliced_mesh,
+                'moved_moving': moved_moving_np
+            }
+        
+        finally:
+            # Cleanup all FireANTs objects
+            if fa_image_fixed is not None:
+                del fa_image_fixed
+            if fa_image_moving is not None:
+                del fa_image_moving
+            if fa_image_to_reslice is not None:
+                del fa_image_to_reslice
+            torch.cuda.empty_cache()
 
     def get_device_type(self) -> str:
         return "cuda"  # or "GPU" depending on Fireants capabilities

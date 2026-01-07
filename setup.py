@@ -33,6 +33,7 @@ setup(
             "create-reference-mask=processing.cli.create_reference_mask:main",
             "create-tp-images=processing.cli.create_tp_images:main",
             "resample-to-reference=processing.cli.resample_to_reference:main",
+            "test_registration_manager=registration.tests.test_registration_manager:main",
 		],
 	},
 )

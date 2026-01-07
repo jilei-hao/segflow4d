@@ -22,3 +22,7 @@ class AbstractImageHelper(ABC):
     @abstractmethod
     def extract_timepoint_image(self, image_4d: ImageWrapper, timepoint: int) -> ImageWrapper:
         pass
+
+    @abstractmethod
+    def read_image(self, file_path: str) -> ImageWrapper:
+        pass

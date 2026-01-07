@@ -64,3 +64,8 @@ class CPUImageHelper(AbstractImageHelper):
         extractor.SetSize(size)
         extractor.SetIndex(index)
         return ImageWrapper(extractor.Execute(image_4d.get_data()))
+    
+
+    def read_image(self, file_path: str) -> ImageWrapper:
+        itk_image = sitk.ReadImage(file_path)
+        return ImageWrapper(itk_image)

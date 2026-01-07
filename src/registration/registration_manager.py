@@ -4,18 +4,9 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
 from registration.registration_handler_factory import RegistrationHandlerFactory
-from typing import Optional, Callable, Any, Literal
+from typing import Optional, Callable, Any
 
 logger = logging.getLogger(__name__)
-
-# Define available registration methods
-REGISTRATION_METHODS = Literal[
-    "run_affine",
-    "run_deformable",
-    "run_registration_and_reslice",
-    "run_reslice_segmentation",
-    "run_reslice_mesh"
-]
 
 
 class DeviceManager:
@@ -80,7 +71,7 @@ class DeviceManager:
 
 class RegistrationManager:
     def __init__(self, registration_backend: str, number_of_concurrent_runners: Optional[int] = None,
-                 required_vram_mb: float = 2048, vram_check_interval: float = 5.0):
+                 required_vram_mb: float = 10240, vram_check_interval: float = 5.0):
         self._registration_handler = RegistrationHandlerFactory.create_registration_handler(registration_backend)
         self._device_type = self._registration_handler.get_device_type()
         
@@ -98,7 +89,7 @@ class RegistrationManager:
         
         logger.info(f"Device: {self._device_type}, Concurrent runners: {self._number_of_concurrent_runners}")
     
-    def _get_registration_function(self, method_name: REGISTRATION_METHODS) -> Callable[..., Any]:
+    def _get_registration_function(self, method_name: str) -> Callable[..., Any]:
         """
         Get the registration function to use.
         
@@ -117,7 +108,7 @@ class RegistrationManager:
         logger.info(f"Using registration method: {method_name}")
         return run_fn
     
-    def submit(self, method_name: REGISTRATION_METHODS, *args, **kwargs) -> Future:
+    def submit(self, method_name: str, *args, **kwargs) -> Future:
         """
         Submit a registration job.
         
