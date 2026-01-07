@@ -31,15 +31,24 @@ def main():
     img_to_reslice = ih.read_image("/data/jilei/spt/bavcta005/scan2/seg_ref/sr_tp-001.nii.gz")
 
     future1 = manager.submit(method, img_fixed=image_fixed, img_moving=image_moving, img_to_reslice=img_to_reslice, mesh_to_reslice={}, options={})
-    # future2 = manager.submit(method, img_fixed=image_fixed, img_moving=image_moving, img_to_reslice=img_to_reslice, mesh_to_reslice={}, options={})
+    
     # future3 = manager.submit(method, img_fixed=image_fixed, img_moving=image_moving, img_to_reslice=img_to_reslice, mesh_to_reslice={}, options={})
 
     # Wait for the job to complete
     try:
         result1 = future1.result()  # Blocks until done
         logger.info(f"Registration 1 completed: {result1}")
-        # result2 = future2.result()  # Blocks until done
-        # logger.info(f"Registration 2 completed: {result2}")
+        # result3 = future3.result()  # Blocks until done
+        # logger.info(f"Registration 3 completed: {result3}")
+    except Exception as e:
+        logger.error(f"Registration failed: {e}")
+
+    future2 = manager.submit(method, img_fixed=image_fixed, img_moving=image_moving, img_to_reslice=img_to_reslice, mesh_to_reslice={}, options={})
+
+    # Wait for the job to complete
+    try:
+        result2 = future2.result()  # Blocks until done
+        logger.info(f"Registration 2 completed: {result2}")
         # result3 = future3.result()  # Blocks until done
         # logger.info(f"Registration 3 completed: {result3}")
     except Exception as e:

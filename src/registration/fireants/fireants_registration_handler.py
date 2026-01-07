@@ -1,3 +1,4 @@
+from common.types.image_wrapper import ImageWrapper
 from registration.abstract_registration_handler import AbstractRegistrationHandler
 import logging
 import torch
@@ -53,7 +54,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 - loss_type: Loss function type 'mse' or 'cc' [default: 'mse']
                 - cc_kernel_size: Kernel size for CC loss [default: 3]
                 - deformation_type: 'compositive' or 'additive' [default: 'compositive']
-                - smooth_grad_sigma: Smoothing sigma for gradients [default: 1.5]
+                - smooth_grad_sigma: Smoothing sigma for gradients [default: 3.0]
+                - smooth_warp_sigma: Smoothing sigma for warps [default: 1.5]
         
         Returns:
             Dictionary with keys:
@@ -73,7 +75,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         loss_type = options.get('loss_type', 'mse')
         cc_kernel_size = options.get('cc_kernel_size', 3)
         deformation_type = options.get('deformation_type', 'compositive')
-        smooth_grad_sigma = options.get('smooth_grad_sigma', 1.5)
+        smooth_grad_sigma = options.get('smooth_grad_sigma', 3.0)
+        smooth_warp_sigma = options.get('smooth_warp_sigma', 1.5)
         
         # Initialize variables for cleanup in finally block
         fa_image_fixed = None
@@ -96,9 +99,14 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             if loss_type == 'cc':
                 loss_kwargs['cc_kernel_size'] = cc_kernel_size
             
+            # ==================================================================
             # Stage 1: Affine registration
+            # ==================================================================
             logger.info("Starting affine registration...")
             start_affine = time()
+            
+            batch_fixed = BatchedImages([fa_image_fixed])
+            batch_moving = BatchedImages([fa_image_moving])
             
             affine_reg = AffineRegistration(
                 scales=scales,
@@ -119,27 +127,34 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Get affine matrix before cleanup
             affine_matrix = affine_reg.get_affine_matrix().detach().clone()
             
-            # Clean up affine registration
+            # Clean up only the registration object and batches (NOT the Image objects)
             del affine_reg
+            del moved_affine
             del batch_fixed
             del batch_moving
             torch.cuda.empty_cache()
             
+
+            # ==================================================================
             # Stage 2: Deformable registration with affine initialization
+            # ==================================================================
             logger.info("Starting deformable registration...")
             start_deformable = time()
             
-            # Recreate batches for deformable registration
+            # Reuse fa_image_fixed, fa_image_moving, fa_image_to_reslice
+            # Just create new BatchedImages wrappers
             batch_fixed = BatchedImages([fa_image_fixed])
+            batch_moving = BatchedImages([fa_image_moving])
             batch_to_reslice = BatchedImages([fa_image_to_reslice])
             
             deformable_reg = GreedyRegistration(
                 scales=scales,
                 iterations=deformable_iterations,
                 fixed_images=batch_fixed,
-                moving_images=BatchedImages([fa_image_moving]),
+                moving_images=batch_moving,
                 deformation_type=deformation_type,
                 smooth_grad_sigma=smooth_grad_sigma,
+                smooth_warp_sigma=smooth_warp_sigma,
                 loss_type=loss_type,
                 optimizer='adam',
                 optimizer_lr=deformable_lr,
@@ -155,15 +170,14 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Reslicing target image...")
             moved_resliced = deformable_reg.evaluate(batch_fixed, batch_to_reslice)
             
-            # Extract data immediately and detach
-            moved_moving_np = moved_affine[0].detach().cpu().numpy().copy()
+            # Extract data immediately
             resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
             
-            # Clean up deformable registration and batches
+            # Clean up deformable registration and batches (NOT the Image objects)
             del deformable_reg
-            del moved_affine
             del moved_resliced
             del batch_fixed
+            del batch_moving
             del batch_to_reslice
             torch.cuda.empty_cache()
             
@@ -196,9 +210,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             
             return {
                 'affine_matrix': affine_matrix,
-                'resliced_image': resliced_itk,
-                'resliced_mesh': resliced_mesh,
-                'moved_moving': moved_moving_np
+                'resliced_image': ImageWrapper(resliced_itk),
+                'resliced_mesh': resliced_mesh
             }
         
         finally:
