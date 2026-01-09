@@ -88,7 +88,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Converting images to FireANTs format...")
             fa_image_fixed = Image(img_fixed.get_data())
             fa_image_moving = Image(img_moving.get_data())
-            fa_image_to_reslice = Image(img_to_reslice.get_data())
+            fa_image_to_reslice = Image(img_to_reslice.get_data(), is_segmentation=True)
 
             batch_fixed = BatchedImages([fa_image_fixed])
             batch_moving = BatchedImages([fa_image_moving])

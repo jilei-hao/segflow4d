@@ -3,14 +3,10 @@ from common.types.propagation_input import PropagationInputFactory
 from utility.io.async_writer import async_writer
 import logging
 
-def configure_logging():
+def configure_logging(log_level='INFO'):
+    log_level_int = getattr(logging, log_level.upper(), logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
-        format='[%(asctime)s - %(name)s - %(levelname)s] - %(message)s',
-        handlers=[logging.StreamHandler()]
-    )
-    logging.basicConfig(
-        level=logging.DEBUG,
+        level=log_level_int,
         format='[%(asctime)s - %(name)s - %(levelname)s] - %(message)s',
         handlers=[logging.StreamHandler()]
     )
@@ -44,10 +40,10 @@ def parse_arguments():
     return args
 
 def main():
-    configure_logging()
-    logger = logging.getLogger("segflow4d")
-
     args = parse_arguments()
+    configure_logging(args.log_level)
+
+    logger = logging.getLogger("segflow4d")
 
     input_factory = PropagationInputFactory()
     input_factory.set_image_4d_from_disk(args.image4d)

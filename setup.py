@@ -24,6 +24,7 @@ setup(
 		"SimpleITK",
 		"fireants",
 		"matplotlib",
+        "nvidia-ml-py3",
         "vtk",
 	],
 	entry_points={

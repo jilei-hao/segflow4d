@@ -53,3 +53,20 @@ def create_tp_images(image4d: ImageWrapper, target_timepoints: list[int], resamp
         tp_images[t] = TPImageGroup(image_fullres=ImageWrapper(tp_image), image_lowres=tp_image_lowres)
 
     return tp_images
+
+
+def create_high_res_mask(ref_seg_image: ImageWrapper, low_res_mask: ImageWrapper) -> ImageWrapper:
+    """
+    Create a high-resolution mask by resampling the low-resolution mask to the reference segmentation image.
+
+    Args:
+        ref_seg_image (ImageWrapper): The reference segmentation image.
+        low_res_mask (ImageWrapper): The low-resolution mask image.
+
+    Returns:
+        ImageWrapper: The high-resolution mask image.
+    """
+
+    image_helper = create_image_helper()
+    high_res_mask = image_helper.resample_to_reference(low_res_mask, ref_seg_image, interpolation=InterpolationType.NEAREST)
+    return high_res_mask

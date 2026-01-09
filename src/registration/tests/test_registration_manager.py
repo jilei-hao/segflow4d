@@ -1,4 +1,5 @@
 from registration.registration_manager import RegistrationManager, DeviceManager
+from registration.registration_handler_factory import RegistrationHandlerFactory
 from common.types.registration_methods import REGISTRATION_METHODS
 from common.types.registration_backends import REGISTRATION_BACKENDS
 from utility.image_helper.image_helper_factory import create_image_helper

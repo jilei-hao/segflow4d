@@ -6,10 +6,28 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from registration.registration_handler_factory import RegistrationHandlerFactory
 from typing import Optional, Callable, Any
 
+try:
+    import pynvml
+    PYNVML_AVAILABLE = True
+except ImportError:
+    PYNVML_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
 class DeviceManager:
+    _nvml_initialized = False
+    
+    @staticmethod
+    def _init_nvml():
+        """Initialize NVIDIA Management Library"""
+        if not DeviceManager._nvml_initialized and PYNVML_AVAILABLE:
+            try:
+                pynvml.nvmlInit()
+                DeviceManager._nvml_initialized = True
+            except Exception as e:
+                logger.warning(f"Failed to initialize NVML: {e}")
+    
     @staticmethod
     def get_cpu_count() -> int:
         """Get number of CPU cores available"""
@@ -38,15 +56,46 @@ class DeviceManager:
     
     @staticmethod
     def get_gpu_memory_usage(device_id: int = 0) -> Optional[dict]:
-        """Get GPU memory usage for a specific device (in MB)"""
+        """Get GPU memory usage for a specific device (in MB) - includes all processes"""
         if not torch.cuda.is_available():
             return None
         
+        # Try to get real GPU memory usage from NVML first
+        if PYNVML_AVAILABLE:
+            DeviceManager._init_nvml()
+            if DeviceManager._nvml_initialized:
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+                    
+                    # Force garbage collection on the target device to free memory
+                    current_device = torch.cuda.current_device()
+                    torch.cuda.set_device(device_id)
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    torch.cuda.set_device(current_device)
+                    
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    total_mb = mem_info.total / 1024 / 1024
+                    used_mb = mem_info.used / 1024 / 1024
+                    free_mb = mem_info.free / 1024 / 1024
+                    
+                    return {
+                        'allocated_mb': used_mb,  # Total used by all processes
+                        'reserved_mb': used_mb,   # Same as allocated for NVML
+                        'total_mb': total_mb,
+                        'free_mb': free_mb,
+                        'usage_percent': (used_mb / total_mb) * 100
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to get NVML memory info: {e}")
+        
+        # Fallback to PyTorch memory tracking (less accurate)
         allocated = torch.cuda.memory_allocated(device_id) / 1024 / 1024
         reserved = torch.cuda.memory_reserved(device_id) / 1024 / 1024
         total = torch.cuda.get_device_properties(device_id).total_memory / 1024 / 1024
         free = total - allocated
         
+        logger.warning("Using PyTorch memory tracking - may not reflect other processes")
         return {
             'allocated_mb': allocated,
             'reserved_mb': reserved,
@@ -65,13 +114,35 @@ class DeviceManager:
         if mem_info is None:
             return False
         
-        safe_free = mem_info['free_mb'] * (1 - threshold_percent / 100)
+        logger.debug(f"GPU {device_id} Memory Info: {mem_info}")
+        
+        # Use free memory minus safety margin for fragmentation, etc.
+        safety_margin_mb = 2048  # Reduced from 3072 to 2GB - your GPU 0 has 22GB free
+        safe_free = max(0, mem_info['free_mb'] - safety_margin_mb)
+        
+        logger.info(f"GPU {device_id} safe free memory: {safe_free:.0f}MB, required: {required_mb}MB")
         return safe_free >= required_mb
 
 
 class RegistrationManager:
-    def __init__(self, registration_backend: str, number_of_concurrent_runners: Optional[int] = None,
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls, registration_backend: Optional[str] = None, number_of_concurrent_runners: Optional[int] = None,
+                required_vram_mb: float = 10240, vram_check_interval: float = 5.0):
+        if cls._instance is None:
+            cls._instance = super(RegistrationManager, cls).__new__(cls)
+        return cls._instance
+    
+    def __init__(self, registration_backend: Optional[str] = None, number_of_concurrent_runners: Optional[int] = None,
                  required_vram_mb: float = 10240, vram_check_interval: float = 5.0):
+        # Only initialize once
+        if RegistrationManager._initialized:
+            return
+        
+        if registration_backend is None:
+            raise ValueError("registration_backend is required for first initialization")
+        
         self._registration_handler = RegistrationHandlerFactory.create_registration_handler(registration_backend)
         self._device_type = self._registration_handler.get_device_type()
         
@@ -87,8 +158,16 @@ class RegistrationManager:
         self._vram_check_interval = vram_check_interval
         self._executor = ThreadPoolExecutor(max_workers=self._number_of_concurrent_runners)
         
-        logger.info(f"Device: {self._device_type}, Concurrent runners: {self._number_of_concurrent_runners}")
+        RegistrationManager._initialized = True
+        logger.info(f"Device: {self._device_type}, Concurrent runners: {self._number_of_concurrent_runners}, Required VRAM: {self._required_vram_mb}MB")
     
+    @staticmethod
+    def get_instance():
+        """Get the singleton instance of RegistrationManager"""
+        if RegistrationManager._instance is None:
+            raise ValueError("RegistrationManager is not initialized yet")
+        return RegistrationManager._instance
+
     def _get_registration_function(self, method_name: str) -> Callable[..., Any]:
         """
         Get the registration function to use.
@@ -133,7 +212,7 @@ class RegistrationManager:
                     for gpu_id in range(gpu_count):
                         if DeviceManager.has_sufficient_vram(self._required_vram_mb, device_id=gpu_id):
                             device_id = gpu_id
-                            logger.info(f"GPU {device_id} has sufficient VRAM, using this device")
+                            logger.info(f"GPU {device_id} has sufficient VRAM, required {self._required_vram_mb}MB, using this device")
                             break
                     
                     if device_id is None:
@@ -162,6 +241,14 @@ class RegistrationManager:
     def shutdown(self, wait: bool = True) -> None:
         """Shutdown the executor"""
         self._executor.shutdown(wait=wait)
+    
+    @classmethod
+    def reset(cls) -> None:
+        """Reset the singleton (useful for testing)"""
+        if cls._instance is not None:
+            cls._instance.shutdown(wait=True)
+        cls._instance = None
+        cls._initialized = False
 
 
 

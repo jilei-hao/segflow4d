@@ -4,7 +4,7 @@ from common.types.tp_data import TPData
 from common.types.image_wrapper import ImageWrapper
 from common.types.mesh_wrapper import MeshWrapper
 from utility.image_helper.image_helper_factory import create_image_helper
-from processing.image_processing import create_reference_mask
+from processing.image_processing import create_reference_mask, create_high_res_mask
 from common.types.tp_partition_input import TPPartitionInput
 from logging import getLogger
 from utility.io.async_writer import async_writer
@@ -46,10 +46,13 @@ class TPPartition:
         tp_data_dict[self._input.tp_ref].segmentation = self._input.seg_ref
 
         logger.info(f"Creating reference mask for timepoint {self._input.tp_ref} in TPPartition")
-        tp_data_dict[self._input.tp_ref].mask_low_res = create_reference_mask(tp_data_dict[self._input.tp_ref].segmentation, resample_factor=self._options.lowres_resample_factor, dilation_radius=self._options.dilation_radius)
+        mask_ref_lr = create_reference_mask(tp_data_dict[self._input.tp_ref].segmentation, resample_factor=self._options.lowres_resample_factor, dilation_radius=self._options.dilation_radius)
+        tp_data_dict[self._input.tp_ref].mask_low_res = mask_ref_lr
+        tp_data_dict[self._input.tp_ref].mask_high_res = create_high_res_mask(ref_seg_image=self._input.seg_ref, low_res_mask=mask_ref_lr)
 
         if self._options.debug:
-            async_writer.submit_image(tp_data_dict[self._input.tp_ref].mask_low_res, os.path.join(self._options.debug_output_directory, f"mask-lr_tp-{self._input.tp_ref:03d}.nii.gz"))
+            async_writer.submit_image(tp_data_dict[self._input.tp_ref].mask_low_res, os.path.join(self._options.debug_output_directory, f"mask-ref-lr_tp-{self._input.tp_ref:03d}.nii.gz"))
+            async_writer.submit_image(tp_data_dict[self._input.tp_ref].mask_high_res, os.path.join(self._options.debug_output_directory, f"mask-ref-hr_tp-{self._input.tp_ref:03d}.nii.gz"))
 
         tp_data_dict[self._input.tp_ref].segmentation_mesh = None  # Could be set if needed
         tp_data_dict[self._input.tp_ref].additional_meshes = self._input.additional_meshes_ref

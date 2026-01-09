@@ -2,13 +2,15 @@ from registration.abstract_registration_handler import AbstractRegistrationHandl
 
 
 class RegistrationHandlerFactory:
+
     @staticmethod
-    def create_registration_handler(method: str) -> 'AbstractRegistrationHandler':
-        if method == 'fireants':
+    def create_registration_handler(backend) -> 'AbstractRegistrationHandler':
+        """Create a new registration handler based on the backend type"""
+        if backend == 'fireants':
             from registration.fireants.fireants_registration_handler import FireantsRegistrationHandler
             return FireantsRegistrationHandler()
-        if method == 'greedy':
+        elif backend == 'greedy':
             from registration.greedy.greedy_registration_handler import GreedyRegistrationHandler
             return GreedyRegistrationHandler()
         else:
-            raise ValueError(f"Unknown registration method: {method}")
+            raise ValueError(f"Unknown registration backend: {backend}")
