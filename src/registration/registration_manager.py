@@ -145,6 +145,10 @@ class DeviceManager:
             # Synchronize to ensure all operations complete
             torch.cuda.synchronize()
             
+            # IMPORTANT: Reset CUDA memory allocator to free fragmented memory
+            # This is critical when using multiple GPUs
+            torch.cuda.reset_peak_memory_stats(device_id)
+            
             # Log memory status
             mem_info = DeviceManager.get_gpu_memory_usage(device_id)
             if mem_info:
@@ -221,14 +225,6 @@ class RegistrationManager:
     def submit(self, method_name: str, *args, **kwargs) -> Future:
         """
         Submit a registration job.
-        
-        Args:
-            method_name: Name of the registration method to use (required)
-            *args: Positional arguments for the registration function
-            **kwargs: Keyword arguments for the registration function
-        
-        Returns:
-            A Future representing the submitted job.
         """
         run_fn = self._get_registration_function(method_name)
         
@@ -239,10 +235,13 @@ class RegistrationManager:
                 device_id = None
                 thread_id = threading.get_ident()
                 
-                # Pre-cleanup: aggressive cleanup before looking for VRAM
-                logger.debug(f"[Thread {thread_id}] Pre-registration cleanup...")
+                # Pre-cleanup: aggressive cleanup on ALL devices before checking VRAM
+                logger.debug(f"[Thread {thread_id}] Pre-registration cleanup on all GPUs...")
                 for gpu_id in range(gpu_count):
                     DeviceManager.cleanup_gpu_memory(gpu_id)
+                
+                # Give memory time to settle
+                time.sleep(0.1)
                 
                 while device_id is None:
                     # Check all GPUs for sufficient VRAM
@@ -264,7 +263,7 @@ class RegistrationManager:
                         
                         logger.warning(f"[Thread {thread_id}] No GPU has sufficient VRAM. Cleaning up and waiting {self._vram_check_interval}s...")
                         
-                        # Aggressive cleanup before waiting
+                        # Aggressive cleanup on ALL devices before waiting
                         for gpu_id in range(gpu_count):
                             DeviceManager.cleanup_gpu_memory(gpu_id)
                         
@@ -280,9 +279,14 @@ class RegistrationManager:
                     result = run_fn(*args, **kwargs)
                     return result
                 finally:
-                    # Post-cleanup: aggressive cleanup after registration completes
+                    # Post-cleanup: aggressive cleanup on the device that was used
                     logger.debug(f"[Thread {thread_id}] Post-registration cleanup on GPU {device_id}...")
                     DeviceManager.cleanup_gpu_memory(device_id)
+                    
+                    # Also cleanup other devices to prevent memory buildup
+                    for gpu_id in range(gpu_count):
+                        if gpu_id != device_id:
+                            DeviceManager.cleanup_gpu_memory(gpu_id)
             
             return self._executor.submit(run_with_vram_wait_and_cleanup, *args, **kwargs)
         else:

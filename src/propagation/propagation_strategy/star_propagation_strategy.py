@@ -1,5 +1,3 @@
-import torch
-import gc
 from propagation.propagation_strategy.abstract_propagation_strategy import AbstractPropagationStrategy
 from common.types.propagation_strategy_data import PropagationStrategyData
 from registration.registration_manager import RegistrationManager
@@ -19,19 +17,27 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
 
         # propagate from reference time point to all other time points
         reference_tp = time_points[0]
+        data_ref = tp_input_data[reference_tp]
+        
+        # Ensure reference timepoint has resliced_image
+        if data_ref.resliced_image is None:
+            logger.warning(f"No resliced_image for reference timepoint {reference_tp}, using original image")
+            data_ref.resliced_image = data_ref.image
+
+        target_tps = time_points[1:]
+        
+        if len(target_tps) == 0:
+            logger.info("No target timepoints to propagate to")
+            return tp_input_data
 
         try:
-            for i in range(1, len(time_points)):
-                logger.info(f"-- Warping from reference time point {reference_tp} to time point {time_points[i]} --")
-                data_ref = tp_input_data[reference_tp]
-                data_target = tp_input_data[time_points[i]]
+            # Run registrations sequentially - RegistrationManager handles resource management
+            for target_tp in target_tps:
+                logger.info(f"Warping from reference tp {reference_tp} to target tp {target_tp}")
+                
+                data_target = tp_input_data[target_tp]
 
-                # Ensure reference timepoint has resliced_image
-                if data_ref.resliced_image is None:
-                    logger.warning(f"No resliced_image for reference timepoint {reference_tp}, using original image")
-                    data_ref.resliced_image = data_ref.image
-
-                # run registration from reference to target
+                # Run registration
                 result = registration_manager.submit(
                     REGISTRATION_METHODS.RUN_REGISTRATION_AND_RESLICE,
                     img_fixed=data_target.image,
@@ -42,26 +48,13 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
                 ).result()
 
                 resliced_image = result.get('resliced_image', None)
-                data_target.resliced_image = resliced_image
+                tp_input_data[target_tp].resliced_image = resliced_image
+                
+                logger.info(f"Completed registration for target tp {target_tp}")
 
-                tp_input_data[time_points[i]] = data_target
-                
-                # Aggressive cleanup after each registration (similar to SequentialPropagationStrategy pattern)
-                del result
-                gc.collect()
-                
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                
-                logger.debug(f"Completed registration and cleanup for timepoint {time_points[i]}")
-
-        finally:
-            # Final cleanup
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+        except Exception as e:
+            logger.error(f"Registration failed: {e}", exc_info=True)
+            raise
 
         return tp_input_data
 
