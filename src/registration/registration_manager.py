@@ -1,7 +1,9 @@
+import threading
 import torch
 import multiprocessing
 import logging
 import time
+import gc
 from concurrent.futures import ThreadPoolExecutor, Future
 from registration.registration_handler_factory import RegistrationHandlerFactory
 from typing import Optional, Callable, Any
@@ -122,6 +124,34 @@ class DeviceManager:
         
         logger.info(f"GPU {device_id} safe free memory: {safe_free:.0f}MB, required: {required_mb}MB")
         return safe_free >= required_mb
+    
+    @staticmethod
+    def cleanup_gpu_memory(device_id: int = 0):
+        """Aggressive GPU memory cleanup for a specific device"""
+        if not torch.cuda.is_available():
+            return
+        
+        current_device = torch.cuda.current_device()
+        torch.cuda.set_device(device_id)
+        
+        try:
+            # Python garbage collection first
+            gc.collect()
+            
+            # Clear GPU cache
+            torch.cuda.empty_cache()
+            
+            # Synchronize to ensure all operations complete
+            torch.cuda.synchronize()
+            
+            # Log memory status
+            mem_info = DeviceManager.get_gpu_memory_usage(device_id)
+            if mem_info:
+                logger.debug(f"GPU {device_id} cleaned - Allocated: {mem_info['allocated_mb']:.0f}MB, "
+                           f"Free: {mem_info['free_mb']:.0f}MB, Usage: {mem_info['usage_percent']:.1f}%")
+        finally:
+            # Restore original device
+            torch.cuda.set_device(current_device)
 
 
 class RegistrationManager:
@@ -202,17 +232,23 @@ class RegistrationManager:
         run_fn = self._get_registration_function(method_name)
         
         if self._device_type == 'cuda':
-            # GPU: wrap with VRAM wait logic
-            def run_with_vram_wait(*args, **kwargs):
+            # GPU: wrap with VRAM wait logic and aggressive cleanup
+            def run_with_vram_wait_and_cleanup(*args, **kwargs):
                 gpu_count = DeviceManager.get_gpu_count()
                 device_id = None
+                thread_id = threading.get_ident()
+                
+                # Pre-cleanup: aggressive cleanup before looking for VRAM
+                logger.debug(f"[Thread {thread_id}] Pre-registration cleanup...")
+                for gpu_id in range(gpu_count):
+                    DeviceManager.cleanup_gpu_memory(gpu_id)
                 
                 while device_id is None:
                     # Check all GPUs for sufficient VRAM
                     for gpu_id in range(gpu_count):
                         if DeviceManager.has_sufficient_vram(self._required_vram_mb, device_id=gpu_id):
                             device_id = gpu_id
-                            logger.info(f"GPU {device_id} has sufficient VRAM, required {self._required_vram_mb}MB, using this device")
+                            logger.info(f"[Thread {thread_id}] GPU {device_id} has sufficient VRAM, required {self._required_vram_mb}MB")
                             break
                     
                     if device_id is None:
@@ -220,19 +256,34 @@ class RegistrationManager:
                         for gpu_id in range(gpu_count):
                             mem_info = DeviceManager.get_gpu_memory_usage(gpu_id)
                             if mem_info is not None:
-                                logger.warning(f"GPU {gpu_id} usage: {mem_info['usage_percent']:.1f}%. "
+                                logger.warning(f"[Thread {thread_id}] GPU {gpu_id} usage: {mem_info['usage_percent']:.1f}%. "
                                             f"Free: {mem_info['free_mb']:.0f}MB, Required: {self._required_vram_mb}MB")
                             else:
-                                logger.warning(f"GPU {gpu_id} memory info not available")
-                        logger.warning(f"No GPU has sufficient VRAM. Waiting {self._vram_check_interval}s...")
+                                logger.warning(f"[Thread {thread_id}] GPU {gpu_id} memory info not available")
+                        
+                        logger.warning(f"[Thread {thread_id}] No GPU has sufficient VRAM. Cleaning up and waiting {self._vram_check_interval}s...")
+                        
+                        # Aggressive cleanup before waiting
+                        for gpu_id in range(gpu_count):
+                            DeviceManager.cleanup_gpu_memory(gpu_id)
+                        
                         time.sleep(self._vram_check_interval)
                 
-                logger.info(f"Starting registration job on GPU {device_id}")
+                logger.info(f"[Thread {thread_id}] Starting registration job on GPU {device_id}")
+                
                 # Set the device for PyTorch operations
                 torch.cuda.set_device(device_id)
-                return run_fn(*args, **kwargs)
+                
+                try:
+                    # Run the registration
+                    result = run_fn(*args, **kwargs)
+                    return result
+                finally:
+                    # Post-cleanup: aggressive cleanup after registration completes
+                    logger.debug(f"[Thread {thread_id}] Post-registration cleanup on GPU {device_id}...")
+                    DeviceManager.cleanup_gpu_memory(device_id)
             
-            return self._executor.submit(run_with_vram_wait, *args, **kwargs)
+            return self._executor.submit(run_with_vram_wait_and_cleanup, *args, **kwargs)
         else:
             # CPU: submit directly without VRAM checks
             logger.info("Submitting registration job to CPU")

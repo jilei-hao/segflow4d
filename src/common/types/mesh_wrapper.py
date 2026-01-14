@@ -13,3 +13,8 @@ class MeshWrapper(PropagationDataObject):
 
     def set_data(self, data: vtkPolyData):
         self._data = data
+
+    def deepcopy(self) -> 'MeshWrapper':
+        mesh_copy = vtkPolyData()
+        mesh_copy.DeepCopy(self._data)
+        return MeshWrapper(mesh_copy)

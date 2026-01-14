@@ -20,21 +20,17 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         # Implementation of affine registration using Fireants
         pass
 
-
     def run_deformable(self, img_fixed, img_moving, options):
         # Implementation of deformable registration using Fireants
         pass
-
 
     def run_reslice_segmentation(self, img_to_reslice, img_reference, options):
         # Implementation of segmentation reslicing using Fireants
         pass
 
-
     def run_reslice_mesh(self, mesh_to_reslice, img_reference, options):
         # Implementation of mesh reslicing using Fireants
         pass
-
 
     def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options) -> dict:
         """
@@ -61,7 +57,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             Dictionary with keys:
                 - 'affine_matrix': Computed affine transformation matrix
                 - 'resliced_image': Warped img_to_reslice using deformation
-                - 'moved_moving': Moving image warped to fixed space
+                - 'resliced_mesh': Resliced mesh (not yet implemented)
         """
         
         logger.info("Starting registration and reslicing with FireANTs")
@@ -82,17 +78,20 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         fa_image_fixed = None
         fa_image_moving = None
         fa_image_to_reslice = None
+        affine_reg = None
+        deformable_reg = None
+        batch_fixed = None
+        batch_moving = None
+        batch_to_reslice = None
+        moved_affine = None
+        moved_resliced = None
         
         try:
             # Convert input images to FireANTs format
-            logger.info("Converting images to FireANTs format...")
+            logger.debug("Converting images to FireANTs format...")
             fa_image_fixed = Image(img_fixed.get_data())
             fa_image_moving = Image(img_moving.get_data())
             fa_image_to_reslice = Image(img_to_reslice.get_data(), is_segmentation=True)
-
-            batch_fixed = BatchedImages([fa_image_fixed])
-            batch_moving = BatchedImages([fa_image_moving])
-            batch_to_reslice = BatchedImages([fa_image_to_reslice])
             
             # Prepare loss kwargs
             loss_kwargs = {}
@@ -127,13 +126,15 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Get affine matrix before cleanup
             affine_matrix = affine_reg.get_affine_matrix().detach().clone()
             
-            # Clean up only the registration object and batches (NOT the Image objects)
+            # Clean up affine stage objects
             del affine_reg
             del moved_affine
             del batch_fixed
             del batch_moving
-            torch.cuda.empty_cache()
-            
+            affine_reg = None
+            moved_affine = None
+            batch_fixed = None
+            batch_moving = None
 
             # ==================================================================
             # Stage 2: Deformable registration with affine initialization
@@ -173,14 +174,6 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Extract data immediately
             resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
             
-            # Clean up deformable registration and batches (NOT the Image objects)
-            del deformable_reg
-            del moved_resliced
-            del batch_fixed
-            del batch_moving
-            del batch_to_reslice
-            torch.cuda.empty_cache()
-            
             # Convert resliced image back to original format
             # Handle segmentation (threshold) vs continuous image
             if fa_image_to_reslice.itk_image is not None:
@@ -215,14 +208,29 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             }
         
         finally:
-            # Cleanup all FireANTs objects
+            # Clean up all FireANTs objects - RegistrationManager will handle GPU cleanup
+            logger.debug("Cleaning up registration objects...")
+            
+            if affine_reg is not None:
+                del affine_reg
+            if deformable_reg is not None:
+                del deformable_reg
+            if batch_fixed is not None:
+                del batch_fixed
+            if batch_moving is not None:
+                del batch_moving
+            if batch_to_reslice is not None:
+                del batch_to_reslice
+            if moved_affine is not None:
+                del moved_affine
+            if moved_resliced is not None:
+                del moved_resliced
             if fa_image_fixed is not None:
                 del fa_image_fixed
             if fa_image_moving is not None:
                 del fa_image_moving
             if fa_image_to_reslice is not None:
                 del fa_image_to_reslice
-            torch.cuda.empty_cache()
 
     def get_device_type(self) -> str:
-        return "cuda"  # or "GPU" depending on Fireants capabilities
+        return "cuda"
