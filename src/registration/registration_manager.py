@@ -9,9 +9,10 @@ from registration.registration_handler_factory import RegistrationHandlerFactory
 from typing import Optional, Callable, Any
 
 try:
-    import pynvml
+    import pynvml as pynvml_module
     PYNVML_AVAILABLE = True
 except ImportError:
+    pynvml_module = None
     PYNVML_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,9 @@ class DeviceManager:
     @staticmethod
     def _init_nvml():
         """Initialize NVIDIA Management Library"""
-        if not DeviceManager._nvml_initialized and PYNVML_AVAILABLE:
+        if not DeviceManager._nvml_initialized and PYNVML_AVAILABLE and pynvml_module is not None:
             try:
-                pynvml.nvmlInit()
+                pynvml_module.nvmlInit()
                 DeviceManager._nvml_initialized = True
             except Exception as e:
                 logger.warning(f"Failed to initialize NVML: {e}")
@@ -63,11 +64,11 @@ class DeviceManager:
             return None
         
         # Try to get real GPU memory usage from NVML first
-        if PYNVML_AVAILABLE:
+        if PYNVML_AVAILABLE and pynvml_module is not None:
             DeviceManager._init_nvml()
             if DeviceManager._nvml_initialized:
                 try:
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+                    handle = pynvml_module.nvmlDeviceGetHandleByIndex(device_id)
                     
                     # Force garbage collection on the target device to free memory
                     current_device = torch.cuda.current_device()
@@ -76,7 +77,7 @@ class DeviceManager:
                     torch.cuda.synchronize()
                     torch.cuda.set_device(current_device)
                     
-                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    mem_info = pynvml_module.nvmlDeviceGetMemoryInfo(handle)
                     total_mb = mem_info.total / 1024 / 1024
                     used_mb = mem_info.used / 1024 / 1024
                     free_mb = mem_info.free / 1024 / 1024
