@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
+# Add thread-local GPU synchronization lock
+_gpu_lock = threading.Lock()
 
 class PropagationPipeline:
     def __init__(self, input: PropagationInput):
@@ -60,7 +62,20 @@ class PropagationPipeline:
         pass
 
     def _run_unidirectional_propagation(self, tp_data: dict[int, TPData], ref_input: TPPartitionInput, tp_list: list[int], options: PropagationOptions):
-        logger.info(f"Running unidirectional propagation for time points: {tp_list}")
+        # Add thread identification for better logging
+        import threading
+        thread_id = threading.get_ident()
+        logger.info(f"[Thread {thread_id}] Running unidirectional propagation for time points: {tp_list}")
+
+        # Synchronize GPU access between threads
+        with _gpu_lock:
+            # Force cleanup before starting
+            import torch
+            import gc
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            gc.collect()
 
         # prepare input data for propagation strategy
         tp_input_data = dict[int, PropagationStrategyData]()
@@ -113,9 +128,19 @@ class PropagationPipeline:
                             )
                         )
 
-            # free memory
+            # Aggressive cleanup between stages
             tp_input_data.clear()
             propagated_data_lr.clear()
+            strategy_lr = None
+            
+            # Force cleanup with GPU synchronization
+            with _gpu_lock:
+                import torch
+                import gc
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
 
             # create propagation strategy for high res propagation
             strategy_hr = PropagationStrategyFactory.create_propagation_strategy(PropagationStrategyName.STAR)
@@ -168,15 +193,17 @@ class PropagationPipeline:
             if propagated_data_hr is not None:
                 propagated_data_hr.clear()
                 
-            # Force garbage collection
-            gc.collect()
-            
-            # Clear GPU cache
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+            # Final synchronized cleanup
+            with _gpu_lock:
+                # Force garbage collection
+                gc.collect()
                 
-            logger.debug(f"Memory cleanup completed for timepoints {tp_list}")
+                # Clear GPU cache
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    
+            logger.debug(f"[Thread {thread_id}] Memory cleanup completed for timepoints {tp_list}")
 
 
 
@@ -214,8 +241,10 @@ class PropagationPipeline:
                 backward_tp_data[tp] = tp_partition._tp_data[tp]
             tasks.append(("backward", backward_tp_data, backward_tps))
 
-        # execute tasks in parallel if we have both forward and backward
-        if len(tasks) == 2:
+        # Check if we should run in parallel or sequential based on GPU memory
+        use_parallel = len(tasks) == 2 and self._should_use_parallel_execution()
+        
+        if use_parallel:
             logger.info("Running forward and backward propagation in parallel")
             
             with ThreadPoolExecutor(max_workers=2) as executor:
@@ -240,15 +269,35 @@ class PropagationPipeline:
                     except Exception as exc:
                         logger.error(f"{direction} propagation failed with exception: {exc}")
                         raise
-                        
-        elif len(tasks) == 1:
-            # execute single task sequentially
-            direction, tp_data, tp_list = tasks[0]
-            logger.info(f"Running {direction} propagation only")
-            self._run_unidirectional_propagation(tp_data, tp_partition._input, tp_list, self._options)
         else:
-            logger.info("No propagation tasks to execute (only reference timepoint)")
+            # Execute tasks sequentially to avoid memory issues
+            for direction, tp_data, tp_list in tasks:
+                logger.info(f"Running {direction} propagation sequentially")
+                self._run_unidirectional_propagation(tp_data, tp_partition._input, tp_list, self._options)
 
+    def _should_use_parallel_execution(self) -> bool:
+        """Check if we have enough GPU memory for parallel execution"""
+        import torch
+        if not torch.cuda.is_available():
+            return True  # CPU execution can handle parallel better
+        
+        # Check available VRAM
+        gpu_memory_mb = torch.cuda.get_device_properties(0).total_memory / (1024**2)
+        gpu_memory_free_mb = (torch.cuda.get_device_properties(0).total_memory - 
+                             torch.cuda.memory_allocated()) / (1024**2)
+        
+        # Require at least 20GB total and 15GB free for parallel execution
+        required_total_mb = 20000
+        required_free_mb = 15000
+        
+        can_parallel = gpu_memory_mb > required_total_mb and gpu_memory_free_mb > required_free_mb
+        
+        if not can_parallel:
+            logger.warning(f"Insufficient GPU memory for parallel execution. "
+                          f"Total: {gpu_memory_mb:.0f}MB, Free: {gpu_memory_free_mb:.0f}MB. "
+                          f"Falling back to sequential execution.")
+        
+        return can_parallel
 
     def run(self):
         self._validate_input()

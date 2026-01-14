@@ -11,6 +11,12 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Import threading for thread-safe operations
+import threading
+
+# Global lock for thread-safe FireANTs Image creation
+_fireants_creation_lock = threading.Lock()
+
 class FireantsRegistrationHandler(AbstractRegistrationHandler):
     def __init__(self):
         super().__init__()
@@ -39,29 +45,6 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
     def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options) -> dict:
         """
         Perform affine + deformable registration and reslice images/segmentations.
-        
-        Args:
-            img_fixed: Fixed reference image
-            img_moving: Moving image to register
-            img_to_reslice: Image/segmentation to warp using the computed deformation
-            mesh_to_reslice: Mesh to reslice (to be implemented)
-            options: Dictionary containing registration parameters
-                - scales: List of scales for multi-scale registration [default: [4.0, 2.0, 1.0]]
-                - affine_iterations: Iterations for affine stage [default: [200, 100, 50]]
-                - deformable_iterations: Iterations for deformable stage [default: [200, 100, 25]]
-                - affine_lr: Learning rate for affine optimizer [default: 3e-3]
-                - deformable_lr: Learning rate for deformable optimizer [default: 0.5]
-                - loss_type: Loss function type 'mse' or 'cc' [default: 'mse']
-                - cc_kernel_size: Kernel size for CC loss [default: 3]
-                - deformation_type: 'compositive' or 'additive' [default: 'compositive']
-                - smooth_grad_sigma: Smoothing sigma for gradients [default: 3.0]
-                - smooth_warp_sigma: Smoothing sigma for warps [default: 1.5]
-        
-        Returns:
-            Dictionary with keys:
-                - 'affine_matrix': Computed affine transformation matrix
-                - 'resliced_image': Warped img_to_reslice using deformation
-                - 'moved_moving': Moving image warped to fixed space
         """
         
         logger.info("Starting registration and reslicing with FireANTs")
@@ -82,18 +65,63 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         fa_image_fixed = None
         fa_image_moving = None
         fa_image_to_reslice = None
+        affine_reg = None
+        deformable_reg = None
+        batch_fixed = None
+        batch_moving = None
+        batch_to_reslice = None
+        moved_affine = None
+        moved_resliced = None
         
         try:
-            # Convert input images to FireANTs format
-            logger.info("Converting images to FireANTs format...")
-            fa_image_fixed = Image(img_fixed.get_data())
-            fa_image_moving = Image(img_moving.get_data())
-            fa_image_to_reslice = Image(img_to_reslice.get_data(), is_segmentation=True)
-
-            batch_fixed = BatchedImages([fa_image_fixed])
-            batch_moving = BatchedImages([fa_image_moving])
-            batch_to_reslice = BatchedImages([fa_image_to_reslice])
+            # Force initial cleanup
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
             
+            # Thread-safe image data conversion to avoid lazy tensor issues
+            logger.info("Converting images to FireANTs format with thread safety...")
+            
+            # Get image data and ensure it's materialized (not lazy)
+            # Create deep copies to avoid shared state between threads
+            import numpy as np
+            fixed_data = img_fixed.get_data()
+            moving_data = img_moving.get_data()
+            reslice_data = img_to_reslice.get_data()
+            
+            # Ensure data is contiguous and create copies to avoid shared memory
+            if hasattr(fixed_data, 'copy'):
+                fixed_data = fixed_data.copy()
+            if hasattr(moving_data, 'copy'):
+                moving_data = moving_data.copy()
+            if hasattr(reslice_data, 'copy'):
+                reslice_data = reslice_data.copy()
+            
+            # Ensure any PyTorch tensors are materialized (not lazy)
+            if hasattr(torch, 'is_tensor'):
+                if torch.is_tensor(fixed_data) and hasattr(fixed_data, '_base'):
+                    fixed_data = fixed_data.detach().cpu().numpy().copy()
+                if torch.is_tensor(moving_data) and hasattr(moving_data, '_base'):
+                    moving_data = moving_data.detach().cpu().numpy().copy()
+                if torch.is_tensor(reslice_data) and hasattr(reslice_data, '_base'):
+                    reslice_data = reslice_data.detach().cpu().numpy().copy()
+            
+            # Convert to FireANTs format with thread synchronization
+
+
+            
+            with _fireants_creation_lock:
+                fa_image_fixed = Image(fixed_data)
+                # Small delay to prevent rapid concurrent access
+                import time as time_module
+                time_module.sleep(0.01)
+                
+            with _fireants_creation_lock:
+                fa_image_moving = Image(moving_data)
+                time_module.sleep(0.01)
+                
+            with _fireants_creation_lock:
+                fa_image_to_reslice = Image(reslice_data, is_segmentation=True)
+
             # Prepare loss kwargs
             loss_kwargs = {}
             if loss_type == 'cc':
@@ -124,16 +152,24 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             end_affine = time()
             logger.info(f"Affine registration completed in {end_affine - start_affine:.2f} seconds")
             
-            # Get affine matrix before cleanup
+            # Get affine matrix - keep on GPU for deformable registration
             affine_matrix = affine_reg.get_affine_matrix().detach().clone()
             
-            # Clean up only the registration object and batches (NOT the Image objects)
-            del affine_reg
+            # Aggressive cleanup after affine stage
             del moved_affine
+            moved_affine = None
+            del affine_reg
+            affine_reg = None
             del batch_fixed
             del batch_moving
-            torch.cuda.empty_cache()
+            batch_fixed = None
+            batch_moving = None
             
+            # Force garbage collection and GPU cleanup
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
             # ==================================================================
             # Stage 2: Deformable registration with affine initialization
@@ -141,8 +177,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Starting deformable registration...")
             start_deformable = time()
             
-            # Reuse fa_image_fixed, fa_image_moving, fa_image_to_reslice
-            # Just create new BatchedImages wrappers
+            # Create new BatchedImages wrappers
             batch_fixed = BatchedImages([fa_image_fixed])
             batch_moving = BatchedImages([fa_image_moving])
             batch_to_reslice = BatchedImages([fa_image_to_reslice])
@@ -170,16 +205,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Reslicing target image...")
             moved_resliced = deformable_reg.evaluate(batch_fixed, batch_to_reslice)
             
-            # Extract data immediately
+            # Extract data immediately and copy to CPU
             resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
-            
-            # Clean up deformable registration and batches (NOT the Image objects)
-            del deformable_reg
-            del moved_resliced
-            del batch_fixed
-            del batch_moving
-            del batch_to_reslice
-            torch.cuda.empty_cache()
             
             # Convert resliced image back to original format
             # Handle segmentation (threshold) vs continuous image
@@ -215,14 +242,35 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             }
         
         finally:
-            # Cleanup all FireANTs objects
-            if fa_image_fixed is not None:
-                del fa_image_fixed
-            if fa_image_moving is not None:
-                del fa_image_moving
+            # Comprehensive cleanup - delete everything explicitly
+            if moved_resliced is not None:
+                del moved_resliced
+            if deformable_reg is not None:
+                del deformable_reg
+            if moved_affine is not None:
+                del moved_affine
+            if affine_reg is not None:
+                del affine_reg
+            if batch_to_reslice is not None:
+                del batch_to_reslice
+            if batch_fixed is not None:
+                del batch_fixed
+            if batch_moving is not None:
+                del batch_moving
             if fa_image_to_reslice is not None:
                 del fa_image_to_reslice
+            if fa_image_moving is not None:
+                del fa_image_moving
+            if fa_image_fixed is not None:
+                del fa_image_fixed
+                
+            # Force cleanup
+            import gc
+            gc.collect()
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+            logger.debug("FireANTs registration cleanup completed")
 
     def get_device_type(self) -> str:
         return "cuda"  # or "GPU" depending on Fireants capabilities
