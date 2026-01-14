@@ -9,6 +9,7 @@ from fireants.registration.affine import AffineRegistration
 from fireants.registration.greedy import GreedyRegistration
 import SimpleITK as sitk
 import numpy as np
+from utility.image_helper.image_helper_factory import create_image_helper
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             itk_fixed = img_fixed.get_data()
             itk_moving = img_moving.get_data()
             itk_to_reslice = img_to_reslice.get_data()
+
+            ih = create_image_helper()
+            unique_labels = ih.get_unique_labels(img_to_reslice)
+            logger.debug(f"Unique labels in image to reslice: {unique_labels}")
             
             # Store metadata for result reconstruction
             reslice_meta = {
@@ -129,7 +134,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Create NEW FireANTs images for deformable stage (pass ITK images)
             fa_image_fixed = Image(itk_fixed)
             fa_image_moving = Image(itk_moving)
-            fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=True)
+            fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=True, background_seg_label=-1)
             
             batch_fixed = BatchedImages([fa_image_fixed])
             batch_moving = BatchedImages([fa_image_moving])
@@ -160,6 +165,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Stage 3: Reslice target image using deformation
             logger.info("Reslicing target image...")
             moved_resliced = deformable_reg.evaluate(batch_fixed, batch_to_reslice)
+            logger.debug(f"Interpolator type: {batch_to_reslice.get_interpolator_type()}")
             
             # Extract data immediately and copy to CPU
             resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
@@ -178,6 +184,13 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             self._cleanup_gpu()
             
             # Convert resliced image back to ITK format using saved metadata
+            logger.debug("Full shape of resliced tensor: " + str(resliced_tensor.shape))
+            
+            # Create output image filled with background (0)
+            output_shape = itk_to_reslice.GetSize()[::-1]  # ITK uses (x, y, z), numpy uses (z, y, x)
+            resliced_labels = np.zeros(output_shape, dtype=np.uint8)
+            
+            # Convert resliced image back to ITK format using saved metadata
             if resliced_tensor.shape[0] == 1:
                 # Binary segmentation - threshold at 0.5
                 resliced_labels = (resliced_tensor[0] > 0.5).astype('uint8')
@@ -189,6 +202,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             resliced_itk.SetSpacing(reslice_meta['spacing'])
             resliced_itk.SetOrigin(reslice_meta['origin'])
             resliced_itk.SetDirection(reslice_meta['direction'])
+
             
             # Mesh reslicing to be implemented
             resliced_mesh = None

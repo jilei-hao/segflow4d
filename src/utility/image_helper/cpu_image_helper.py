@@ -69,3 +69,10 @@ class CPUImageHelper(AbstractImageHelper):
     def read_image(self, file_path: str) -> ImageWrapper:
         itk_image = sitk.ReadImage(file_path)
         return ImageWrapper(itk_image)
+    
+
+    def get_unique_labels(self, image: ImageWrapper) -> list[int]:
+        array_data = sitk.GetArrayFromImage(image.get_data())
+        unique_labels = list(set(array_data.flatten()))
+        unique_labels.sort()
+        return unique_labels

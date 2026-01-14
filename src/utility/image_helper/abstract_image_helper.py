@@ -26,3 +26,7 @@ class AbstractImageHelper(ABC):
     @abstractmethod
     def read_image(self, file_path: str) -> ImageWrapper:
         pass
+
+    @abstractmethod
+    def get_unique_labels(self, image: ImageWrapper) -> list[int]:
+        pass
