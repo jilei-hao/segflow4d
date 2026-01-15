@@ -1,14 +1,20 @@
+import os
 from propagation.propagation_pipeline import PropagationPipeline
 from common.types.propagation_input import PropagationInputFactory
 from utility.io.async_writer import async_writer
 import logging
 
-def configure_logging(log_level='INFO'):
+def configure_logging(log_level='INFO', log_dir=''):
     log_level_int = getattr(logging, log_level.upper(), logging.INFO)
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, 'segflow4d.log')
+        handlers.append(logging.FileHandler(log_file))
     logging.basicConfig(
         level=log_level_int,
         format='[%(asctime)s - %(name)s - %(levelname)s] - %(message)s',
-        handlers=[logging.StreamHandler()]
+        handlers=handlers
     )
 
 logger = logging.getLogger(__name__)
@@ -17,12 +23,13 @@ def parse_arguments():
     import argparse
 
     parser = argparse.ArgumentParser(description="SegFlow4D Propagation Pipeline")
-    parser.add_argument('--image4d', type=str, required=True, help='Path to the input 4d image')
-    parser.add_argument('--output', type=str, required=True, help='Path to the output directory')
-    parser.add_argument('--tp-ref', type=int, required=True, help='Reference time point')
-    parser.add_argument('--tp-targets', type=int, nargs='+', required=True, help='Target time points')
-    parser.add_argument('--seg-ref', type=str, required=True, help='Path to the segmentation reference image')
+    parser.add_argument('--image4d', type=str, help='Path to the input 4d image')
+    parser.add_argument('--output', type=str, help='Path to the output directory')
+    parser.add_argument('--tp-ref', type=int, help='Reference time point')
+    parser.add_argument('--tp-targets', type=int, nargs='+', help='Target time points')
+    parser.add_argument('--seg-ref', type=str, help='Path to the segmentation reference image')
     parser.add_argument('--log-level', type=str, default='INFO', help='Logging level (DEBUG, INFO, WARNING, ERROR)')
+    parser.add_argument('--log-dir', type=str, default='', help='Directory to store log files. Prints to console if not set.')
     parser.add_argument('--add-mesh', action='append', dest='additional_meshes', 
                         help='Add additional mesh: --add-mesh <name>:<path_to_mesh_file>')
     parser.add_argument('--lowres-factor', type=float, default=0.5, help='Low resolution resample factor')
@@ -53,7 +60,7 @@ def load_json_config(config_path):
 
 def main():
     args = parse_arguments()
-    configure_logging(args.log_level)
+    configure_logging(args.log_level, args.log_dir)
     
     input_factory = PropagationInputFactory()
     input_factory.set_image_4d_from_disk(args.image4d)
