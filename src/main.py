@@ -11,6 +11,8 @@ def configure_logging(log_level='INFO'):
         handlers=[logging.StreamHandler()]
     )
 
+logger = logging.getLogger(__name__)
+
 def parse_arguments():
     import argparse
 
@@ -28,6 +30,9 @@ def parse_arguments():
     parser.add_argument('--registration-backend', type=str, default='fireants', help='Registration backend to use')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--debug-dir', type=str, default='', help='Directory to store debug outputs')
+
+    parser.add_argument('--use-json-config', type=str, default='', help='Path to JSON configuration file')
+    
     args = parser.parse_args()
 
     if args.additional_meshes:
@@ -39,29 +44,72 @@ def parse_arguments():
 
     return args
 
+def load_json_config(config_path):
+    """Load and parse JSON configuration file"""
+    import json
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    return config
+
 def main():
     args = parse_arguments()
     configure_logging(args.log_level)
-
-    logger = logging.getLogger("segflow4d")
-
+    
     input_factory = PropagationInputFactory()
     input_factory.set_image_4d_from_disk(args.image4d)
-    input_factory.add_tp_input_group_from_disk(
-        tp_ref=args.tp_ref,
-        tp_target=args.tp_targets,
-        seg_ref_path=args.seg_ref,
-        additional_meshes_ref=args.additional_meshes
-    )
-    input_factory.set_options(
-        lowres_factor=args.lowres_factor,
-        registration_backend=args.registration_backend,
-        dilation_radius=args.dilation_radius,
-        write_result_to_disk=True,
-        output_directory=args.output,
-        debug=args.debug,
-        debug_output_directory=args.debug_dir
-    )
+
+    if args.use_json_config:
+        config = load_json_config(args.use_json_config)
+        
+        # Set global options
+        input_factory.set_options(
+            lowres_factor=config.get('lowres_factor', 0.5),
+            registration_backend=config.get('registration_backend', 'fireants'),
+            dilation_radius=config.get('dilation_radius', 2),
+            write_result_to_disk=True,
+            output_directory=config.get('output'),
+            debug=config.get('debug', False),
+            debug_output_directory=config.get('debug_dir', '')
+        )
+        
+        # Parse and add multiple tp_input_groups
+        tp_input_groups = config.get('tp_input_groups', [])
+        
+        if not tp_input_groups:
+            logger.error("No tp_input_groups found in JSON configuration")
+            return
+        
+        for group in tp_input_groups:
+            tp_ref = group.get('tp_ref')
+            tp_targets = group.get('tp_targets', [])
+            seg_ref = group.get('seg_ref')
+            additional_meshes = group.get('additional_meshes', {})
+            
+            logger.info(f"Adding tp_input_group with tp_ref={tp_ref}, tp_targets={tp_targets}")
+            
+            input_factory.add_tp_input_group_from_disk(
+                tp_ref=tp_ref,
+                tp_target=tp_targets,
+                seg_ref_path=seg_ref,
+                additional_meshes_ref=additional_meshes
+            )
+    else:
+        # Use command-line arguments
+        input_factory.add_tp_input_group_from_disk(
+            tp_ref=args.tp_ref,
+            tp_target=args.tp_targets,
+            seg_ref_path=args.seg_ref,
+            additional_meshes_ref=args.additional_meshes
+        )
+        input_factory.set_options(
+            lowres_factor=args.lowres_factor,
+            registration_backend=args.registration_backend,
+            dilation_radius=args.dilation_radius,
+            write_result_to_disk=True,
+            output_directory=args.output,
+            debug=args.debug,
+            debug_output_directory=args.debug_dir
+        )
 
     propagation_input = input_factory.build()
     pipeline = PropagationPipeline(propagation_input)
@@ -69,9 +117,11 @@ def main():
     logger.info("Starting SegFlow4D Propagation Pipeline")
     pipeline.run()
 
-    
     async_writer.shutdown(wait=True)
     logger.info("SegFlow4D Propagation Pipeline completed")
+
+if __name__ == "__main__":
+    main()
 
 
 
