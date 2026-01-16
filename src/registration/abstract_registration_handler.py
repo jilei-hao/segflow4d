@@ -20,7 +20,7 @@ class AbstractRegistrationHandler(ABC):
 
 
     @abstractmethod
-    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options) -> dict:
+    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options, mask_fixed = None, mask_moving = None) -> dict:
         pass
 
 

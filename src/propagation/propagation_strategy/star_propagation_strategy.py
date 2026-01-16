@@ -44,7 +44,9 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
                     img_moving=data_ref.image,
                     img_to_reslice=data_ref.resliced_image,
                     mesh_to_reslice={},
-                    options={}
+                    options={},
+                    mask_fixed=data_target.mask,
+                    mask_moving=data_ref.mask,
                 ).result()
 
                 resliced_image = result.get('resliced_image', None)

@@ -39,7 +39,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
     def run_reslice_mesh(self, mesh_to_reslice, img_reference, options):
         pass
 
-    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options) -> dict:
+
+    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options, mask_fixed=None, mask_moving=None) -> dict:
         """
         Perform affine + deformable registration and reslice images/segmentations.
         """
@@ -89,6 +90,26 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # ==================================================================
             logger.info("Starting affine registration...")
             start_affine = time()
+
+            fa_image_fixed = Image(itk_fixed)
+            fa_image_moving = Image(itk_moving)
+
+            if mask_fixed is not None:
+                itk_mask_fixed = mask_fixed.get_data()
+                fa_mask_fixed = Image(itk_mask_fixed, is_segmentation=True)
+                fa_image_fixed.array = fa_image_fixed.array * fa_mask_fixed.array
+                logger.debug("Applied fixed mask to fixed image")
+
+            
+                if mask_moving is None:
+                    mask_moving = mask_fixed
+
+
+            if mask_moving is not None:
+                itk_mask_moving = mask_moving.get_data()
+                fa_mask_moving = Image(itk_mask_moving, is_segmentation=True)
+                fa_image_moving.array = fa_image_moving.array * fa_mask_moving.array
+                logger.debug("Applied moving mask to moving image")
             
             batch_fixed = BatchedImages(Image(itk_fixed))
             batch_moving = BatchedImages(Image(itk_moving))
