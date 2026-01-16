@@ -60,13 +60,16 @@ def load_json_config(config_path):
 
 def main():
     args = parse_arguments()
-    configure_logging(args.log_level, args.log_dir)
+    
     
     input_factory = PropagationInputFactory()
-    input_factory.set_image_4d_from_disk(args.image4d)
 
     if args.use_json_config:
         config = load_json_config(args.use_json_config)
+
+        configure_logging(config.get('log_level', args.log_level), config.get('log_dir', args.log_dir))
+
+        input_factory.set_image_4d_from_disk(config.get('image4d'))
         
         # Set global options
         input_factory.set_options(
@@ -101,6 +104,9 @@ def main():
                 additional_meshes_ref=additional_meshes
             )
     else:
+        configure_logging(args.log_level, args.log_dir)
+
+        input_factory.set_image_4d_from_disk(args.image4d)
         # Use command-line arguments
         input_factory.add_tp_input_group_from_disk(
             tp_ref=args.tp_ref,

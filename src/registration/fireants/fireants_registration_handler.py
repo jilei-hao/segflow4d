@@ -22,8 +22,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         """Force GPU memory cleanup"""
         gc.collect()
         if torch.cuda.is_available():
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
+        gc.collect()
 
     def run_affine(self, img_fixed, img_moving, options):
         pass
@@ -57,7 +59,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         smooth_warp_sigma = options.get('smooth_warp_sigma', 1.5)
         
         try:
-            # Get ITK images directly - ImageWrapper.deepcopy() already created independent copies
+            # Get ITK images directly
             logger.debug("Converting images to FireANTs format...")
             itk_fixed = img_fixed.get_data()
             itk_moving = img_moving.get_data()
@@ -88,12 +90,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Starting affine registration...")
             start_affine = time()
             
-            # Create FireANTs images for affine stage (pass ITK images)
-            fa_image_fixed = Image(itk_fixed)
-            fa_image_moving = Image(itk_moving)
-            
-            batch_fixed = BatchedImages([fa_image_fixed])
-            batch_moving = BatchedImages([fa_image_moving])
+            batch_fixed = BatchedImages(Image(itk_fixed))
+            batch_moving = BatchedImages(Image(itk_moving))
             
             affine_reg = AffineRegistration(
                 scales=scales,
@@ -114,15 +112,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             end_affine = time()
             logger.info(f"Affine registration completed in {end_affine - start_affine:.2f} seconds")
             
-            # CRITICAL: Clean up ALL affine stage objects before deformable
+            # Clean up affine stage objects
+            logger.debug("Deleting affine stage objects...")
             del affine_reg
-            del batch_fixed
-            del batch_moving
-            del fa_image_fixed
-            del fa_image_moving
-            
-            # Force GPU memory cleanup between stages
-            logger.debug("Cleaning GPU memory between affine and deformable stages...")
+
             self._cleanup_gpu()
 
             # ==================================================================
@@ -131,16 +124,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Starting deformable registration...")
             start_deformable = time()
             
-            # Create NEW FireANTs images for deformable stage (pass ITK images)
-            fa_image_fixed = Image(itk_fixed)
-            fa_image_moving = Image(itk_moving)
+
             fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=True, background_seg_label=-1)
-            
-            batch_fixed = BatchedImages([fa_image_fixed])
-            batch_moving = BatchedImages([fa_image_moving])
             batch_to_reslice = BatchedImages([fa_image_to_reslice])
             
-            # Move affine matrix back to GPU for initialization
             affine_matrix_gpu = affine_matrix.to(torch.cuda.current_device())
             
             deformable_reg = GreedyRegistration(
@@ -159,10 +146,11 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             )
             
             deformable_reg.optimize()
+            
             end_deformable = time()
             logger.info(f"Deformable registration completed in {end_deformable - start_deformable:.2f} seconds")
             
-            # Stage 3: Reslice target image using deformation
+            # Reslice target image
             logger.info("Reslicing target image...")
             moved_resliced = deformable_reg.evaluate(batch_fixed, batch_to_reslice)
             logger.debug(f"Interpolator type: {batch_to_reslice.get_interpolator_type()}")
@@ -171,38 +159,29 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
             
             # Clean up deformable stage
+            logger.debug("Deleting deformable stage objects...")
             del deformable_reg
+            del batch_to_reslice
             del batch_fixed
             del batch_moving
-            del batch_to_reslice
-            del fa_image_fixed
-            del fa_image_moving
             del fa_image_to_reslice
             del moved_resliced
             del affine_matrix_gpu
             
             self._cleanup_gpu()
             
-            # Convert resliced image back to ITK format using saved metadata
+            # Convert resliced image back to ITK format
             logger.debug("Full shape of resliced tensor: " + str(resliced_tensor.shape))
             
-            # Create output image filled with background (0)
-            output_shape = itk_to_reslice.GetSize()[::-1]  # ITK uses (x, y, z), numpy uses (z, y, x)
-            resliced_labels = np.zeros(output_shape, dtype=np.uint8)
-            
-            # Convert resliced image back to ITK format using saved metadata
             if resliced_tensor.shape[0] == 1:
-                # Binary segmentation - threshold at 0.5
                 resliced_labels = (resliced_tensor[0] > 0.5).astype('uint8')
             else:
-                # Multi-class - take argmax
                 resliced_labels = np.argmax(resliced_tensor, axis=0).astype('uint8')
             
             resliced_itk = sitk.GetImageFromArray(resliced_labels)
             resliced_itk.SetSpacing(reslice_meta['spacing'])
             resliced_itk.SetOrigin(reslice_meta['origin'])
             resliced_itk.SetDirection(reslice_meta['direction'])
-
             
             # Mesh reslicing to be implemented
             resliced_mesh = None

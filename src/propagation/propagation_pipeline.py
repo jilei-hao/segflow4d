@@ -12,6 +12,8 @@ from processing.image_processing import create_high_res_mask
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ class PropagationPipeline:
         self._registration_manager = RegistrationManager(
             registration_backend=self._options.registration_backend,
             required_vram_mb=18000,  # 18G
-            vram_check_interval=2.0  # seconds
+            vram_check_interval=0.5  # seconds
         )
 
     def _validate_input(self):
@@ -61,7 +63,9 @@ class PropagationPipeline:
             )
 
         tp_ref = tp_list[0]
-        tp_input_data[tp_ref].resliced_image = tp_data[tp_ref].mask_low_res.deepcopy() if tp_data[tp_ref].mask_low_res else None
+        mask_low_res = tp_data[tp_ref].mask_low_res
+        if mask_low_res is not None:
+            tp_input_data[tp_ref].resliced_image = mask_low_res.deepcopy()
         
         # Initialize variables
         propagated_data_lr = None
@@ -197,7 +201,7 @@ class PropagationPipeline:
             tasks.append(("backward", backward_tp_data, backward_tps))
 
         # execute tasks in parallel if we have both forward and backward
-        if len(tasks) == 2:
+        if len(tasks) > 1:
             logger.info("Running forward and backward propagation in parallel")
             
             with ThreadPoolExecutor(max_workers=2) as executor:
@@ -222,7 +226,7 @@ class PropagationPipeline:
                         logger.error(f"{direction} propagation failed with exception: {exc}", exc_info=True)
                         raise
                         
-        elif len(tasks) == 1:
+        elif len(tasks):
             # execute single task sequentially
             direction, tp_data, tp_list = tasks[0]
             logger.info(f"Running {direction} propagation only")
@@ -239,3 +243,32 @@ class PropagationPipeline:
 
         for tp_partition in self._tp_partitions:
             self._run_partition(tp_partition)
+
+    def propagate(self, propagation_input: PropagationInput, options: PropagationOptions):
+        """Main propagation method"""
+        try:
+            # ...existing propagation code...
+            
+            # After submitting jobs, periodically check for fatal errors
+            for tp_group in propagation_input.tp_input_groups:
+                # Submit jobs...
+                futures = []  # Collect all futures
+                
+                # Wait for jobs with error checking
+                for future in as_completed(futures, timeout=300):  # 5 min timeout
+                    try:
+                        result = future.result()
+                        # Process result...
+                    except torch.cuda.OutOfMemoryError as e:
+                        logger.critical(f"Fatal OOM error: {e}")
+                        logger.critical("Terminating propagation")
+                        raise
+                    except Exception as e:
+                        logger.error(f"Job failed: {e}")
+                        raise
+        
+        except SystemExit:
+            raise  # Let sys.exit() propagate
+        except Exception as e:
+            logger.error(f"Propagation failed: {e}", exc_info=True)
+            raise
