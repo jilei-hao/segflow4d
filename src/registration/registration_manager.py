@@ -311,7 +311,7 @@ class JobDispatcher:
                 result = None
                 args = None
                 kwargs = None
-                job = None
+                job = dict()
                 run_fn = None
                 
                 gc.collect()

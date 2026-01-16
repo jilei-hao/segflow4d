@@ -4,6 +4,8 @@ from common.types.propagation_input import PropagationInputFactory
 from utility.io.async_writer import async_writer
 import logging
 
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 def configure_logging(log_level='INFO', log_dir=''):
     log_level_int = getattr(logging, log_level.upper(), logging.INFO)
     handlers: list[logging.Handler] = [logging.StreamHandler()]

@@ -125,8 +125,9 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             start_deformable = time()
             
 
-            fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=True, background_seg_label=-1)
+            fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=False)
             batch_to_reslice = BatchedImages([fa_image_to_reslice])
+            batch_to_reslice.interpolate_mode = 'nearest'
             
             affine_matrix_gpu = affine_matrix.to(torch.cuda.current_device())
             
@@ -173,10 +174,20 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Convert resliced image back to ITK format
             logger.debug("Full shape of resliced tensor: " + str(resliced_tensor.shape))
             
-            if resliced_tensor.shape[0] == 1:
-                resliced_labels = (resliced_tensor[0] > 0.5).astype('uint8')
+            # resliced_tensor shape is (1, D, H, W) for non-segmentation mode
+            # Squeeze the channel dimension and convert to integer labels
+            if resliced_tensor.ndim == 4:
+                resliced_labels = resliced_tensor[0]  # Remove channel dim: (D, H, W)
             else:
-                resliced_labels = np.argmax(resliced_tensor, axis=0).astype('uint8')
+                resliced_labels = resliced_tensor
+            
+            # Round to nearest integer and cast to appropriate type
+            # Nearest neighbor interpolation should preserve values, but floating point
+            # precision may introduce small errors
+            resliced_labels = np.round(resliced_labels).astype(np.uint8)
+            
+            logger.debug(f"Resliced labels shape: {resliced_labels.shape}, "
+                        f"unique values: {np.unique(resliced_labels)}")
             
             resliced_itk = sitk.GetImageFromArray(resliced_labels)
             resliced_itk.SetSpacing(reslice_meta['spacing'])
