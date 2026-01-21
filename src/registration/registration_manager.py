@@ -11,6 +11,8 @@ from queue import Queue, Empty
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from typing import Optional, Callable, Any, Dict, List, Tuple
 import pickle
+import multiprocessing as mp
+from multiprocessing import Process, Queue as MPQueue
 
 try:
     import pynvml as pynvml_module
@@ -902,6 +904,259 @@ class RegistrationManager:
             cls._instance.shutdown(wait=True)
         cls._instance = None
         cls._initialized = False
+
+
+def _persistent_gpu_worker(device_id: int, registration_backend: str, 
+                           job_queue: MPQueue, result_queue: MPQueue):
+    """
+    Persistent worker process for a specific GPU.
+    Stays alive and processes jobs from the queue.
+    """
+    import os
+    import torch
+    import logging
+    from registration.registration_handler_factory import RegistrationHandlerFactory
+    
+    # Set up logging
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger(__name__)
+    
+    # Initialize GPU for this process
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(device_id)
+    torch.cuda.init()
+    torch.cuda.set_device(0)
+    
+    # Create handler once (reused for all jobs)
+    handler = RegistrationHandlerFactory.create_registration_handler(registration_backend)
+    
+    logger.info(f"[GPU {device_id}] Worker started (PID: {os.getpid()})")
+    
+    while True:
+        try:
+            # Wait for job
+            job_data = job_queue.get()
+            
+            if job_data is None:  # Shutdown signal
+                logger.info(f"[GPU {device_id}] Worker shutting down")
+                break
+            
+            job_id = job_data['job_id']
+            method_name = job_data['method_name']
+            args = job_data['args']
+            kwargs = job_data['kwargs']
+            
+            logger.info(f"[GPU {device_id}] Processing job {job_id}: {method_name}")
+            
+            try:
+                run_fn = getattr(handler, method_name)
+                result = run_fn(*args, **kwargs)
+                result_queue.put({'job_id': job_id, 'result': result, 'error': None})
+            except Exception as e:
+                logger.error(f"[GPU {device_id}] Job {job_id} failed: {e}")
+                result_queue.put({'job_id': job_id, 'result': None, 'error': e})
+            
+            # Cleanup after each job
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            
+        except Exception as e:
+            logger.error(f"[GPU {device_id}] Worker error: {e}")
+
+
+class PersistentProcessJobDispatcher:
+    """
+    Uses persistent worker processes per GPU to avoid spawn overhead.
+    """
+    
+    def __init__(self, registration_backend: str, required_vram_mb: float,
+                 vram_check_interval: float, max_workers: int):
+        self._registration_backend = registration_backend
+        self._required_vram_mb = required_vram_mb
+        self._vram_check_interval = min(vram_check_interval, 0.1)  # Cap at 0.1s
+        
+        self._gpu_count = DeviceManager.get_gpu_count()
+        self._job_counter = 0
+        self._job_counter_lock = threading.Lock()
+        
+        # Create queues and workers for each GPU
+        self._mp_context = mp.get_context('spawn')
+        self._job_queues: Dict[int, MPQueue] = {}
+        self._result_queues: Dict[int, MPQueue] = {}
+        self._workers: Dict[int, Process] = {}
+        self._pending_futures: Dict[int, Future] = {}  # job_id -> Future
+        self._pending_futures_lock = threading.Lock()
+        
+        for device_id in range(min(max_workers, self._gpu_count)):
+            job_queue = self._mp_context.Queue()
+            result_queue = self._mp_context.Queue()
+            
+            worker = self._mp_context.Process(
+                target=_persistent_gpu_worker,
+                args=(device_id, registration_backend, job_queue, result_queue),
+                daemon=True
+            )
+            worker.start()
+            
+            self._job_queues[device_id] = job_queue
+            self._result_queues[device_id] = result_queue
+            self._workers[device_id] = worker
+        
+        # Device availability tracking
+        self._device_lock = threading.Lock()
+        self._device_busy: Dict[int, bool] = {i: False for i in range(self._gpu_count)}
+        
+        # Job queue for unassigned jobs
+        self._job_queue: Queue = Queue()
+        self._pending_jobs: List[Dict] = []
+        self._pending_lock = threading.Lock()
+        
+        # Start dispatcher and result collector threads
+        self._running = True
+        self._dispatcher_thread = threading.Thread(target=self._dispatch_loop, daemon=True)
+        self._dispatcher_thread.start()
+        
+        self._result_threads = []
+        for device_id in range(min(max_workers, self._gpu_count)):
+            t = threading.Thread(target=self._result_collector, args=(device_id,), daemon=True)
+            t.start()
+            self._result_threads.append(t)
+        
+        logger.info(f"PersistentProcessJobDispatcher started - GPUs: {self._gpu_count}")
+    
+    def _result_collector(self, device_id: int):
+        """Collect results from a specific GPU worker."""
+        result_queue = self._result_queues[device_id]
+        
+        while self._running:
+            try:
+                # Non-blocking check with timeout
+                try:
+                    result_data = result_queue.get(timeout=0.1)
+                except:
+                    continue
+                
+                job_id = result_data['job_id']
+                result = result_data['result']
+                error = result_data['error']
+                
+                with self._pending_futures_lock:
+                    future = self._pending_futures.pop(job_id, None)
+                
+                if future:
+                    if error:
+                        future.set_exception(error)
+                    else:
+                        future.set_result(result)
+                
+                # Release device
+                with self._device_lock:
+                    self._device_busy[device_id] = False
+                    logger.info(f"Device {device_id} released")
+                    
+            except Exception as e:
+                logger.error(f"Result collector error for GPU {device_id}: {e}")
+    
+    def submit(self, method_name: str, args: tuple, kwargs: dict) -> Future:
+        """Submit a job."""
+        user_future = Future()
+        required_vram = kwargs.pop('required_vram_mb', self._required_vram_mb)
+        
+        with self._job_counter_lock:
+            job_id = self._job_counter
+            self._job_counter += 1
+        
+        job = {
+            'job_id': job_id,
+            'method_name': method_name,
+            'args': args,
+            'kwargs': kwargs,
+            'user_future': user_future,
+            'required_vram_mb': required_vram
+        }
+        
+        self._job_queue.put(job)
+        return user_future
+    
+    def _find_available_device(self, required_vram_mb: float) -> Optional[int]:
+        """Find available device."""
+        with self._device_lock:
+            for device_id in self._workers.keys():
+                if self._device_busy[device_id]:
+                    continue
+                
+                mem_info = DeviceManager.get_gpu_memory_usage(device_id)
+                if mem_info and mem_info['free_mb'] - 1024 >= required_vram_mb:
+                    self._device_busy[device_id] = True
+                    return device_id
+        return None
+    
+    def _dispatch_loop(self):
+        """Dispatch jobs to available GPU workers."""
+        while self._running:
+            try:
+                jobs_to_dispatch = []
+                
+                with self._pending_lock:
+                    jobs_to_dispatch.extend(self._pending_jobs)
+                    self._pending_jobs.clear()
+                
+                while True:
+                    try:
+                        job = self._job_queue.get_nowait()
+                        jobs_to_dispatch.append(job)
+                        self._job_queue.task_done()
+                    except Empty:
+                        break
+                
+                if not jobs_to_dispatch:
+                    time.sleep(0.05)
+                    continue
+                
+                undispatched = []
+                for job in jobs_to_dispatch:
+                    device_id = self._find_available_device(job['required_vram_mb'])
+                    
+                    if device_id is not None:
+                        job_id = job['job_id']
+                        
+                        with self._pending_futures_lock:
+                            self._pending_futures[job_id] = job['user_future']
+                        
+                        # Send to worker
+                        job_data = {
+                            'job_id': job_id,
+                            'method_name': job['method_name'],
+                            'args': job['args'],
+                            'kwargs': job['kwargs']
+                        }
+                        self._job_queues[device_id].put(job_data)
+                        logger.info(f"Dispatched job {job_id} to GPU {device_id}")
+                    else:
+                        undispatched.append(job)
+                
+                if undispatched:
+                    with self._pending_lock:
+                        self._pending_jobs.extend(undispatched)
+                    time.sleep(0.1)
+                else:
+                    time.sleep(0.01)
+                    
+            except Exception as e:
+                logger.error(f"Dispatch error: {e}")
+                time.sleep(1.0)
+    
+    def shutdown(self, wait: bool = True):
+        """Shutdown all workers."""
+        self._running = False
+        
+        # Send shutdown signal to all workers
+        for device_id, job_queue in self._job_queues.items():
+            job_queue.put(None)
+        
+        if wait:
+            for worker in self._workers.values():
+                worker.join(timeout=5.0)
 
 
 
