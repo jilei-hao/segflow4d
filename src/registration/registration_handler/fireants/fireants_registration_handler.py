@@ -1,5 +1,5 @@
 from common.types.image_wrapper import ImageWrapper
-from registration.abstract_registration_handler import AbstractRegistrationHandler
+from registration import AbstractRegistrationHandler
 import logging
 import torch
 import gc
