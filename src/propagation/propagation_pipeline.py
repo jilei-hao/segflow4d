@@ -1,4 +1,5 @@
 from typing import Optional
+from common.types.image_wrapper import ImageWrapper
 from common.types.propagation_input import PropagationInput
 from common.types.propagation_options import PropagationOptions
 from common.types.propagation_strategy_data import PropagationStrategyData
@@ -8,6 +9,7 @@ from common.types.tp_partition_input import TPPartitionInput
 from propagation.propagation_strategy.propagation_strategy_factory import PropagationStrategyFactory
 from propagation.tp_partition import TPPartition
 from registration.registration_manager import RegistrationManager
+from utility.image_helper.image_helper_factory import create_image_helper
 from processing.image_processing import create_high_res_mask
 import logging
 import threading
@@ -49,7 +51,7 @@ class PropagationPipeline:
         
         self._input.image_4d = None  # free memory
 
-    def _run_unidirectional_propagation(self, tp_data: dict[int, TPData], ref_input: TPPartitionInput, tp_list: list[int], options: PropagationOptions):
+    def _run_unidirectional_propagation(self, tp_data: dict[int, TPData], ref_input: TPPartitionInput, tp_list: list[int], options: PropagationOptions) -> dict[int, TPData]:
         thread_id = threading.get_ident()
         logger.info(f"[Thread {thread_id}] Running unidirectional propagation for time points: {tp_list}")
 
@@ -71,6 +73,7 @@ class PropagationPipeline:
         propagated_data_lr = None
         propagated_data_hr = None
         tp_input_data_hr = None
+        result = dict[int, TPData]()
 
         try:
             # ===== LOW RES PROPAGATION =====
@@ -146,6 +149,18 @@ class PropagationPipeline:
                         os.path.join(options.debug_output_directory, f"seg-hr_tp-{tp:03d}.nii.gz")
                     )
 
+
+            for tp in tp_list:
+                logger.debug(f"[Thread {thread_id}] Processing time point {tp}")
+                if tp == tp_ref:
+                    result[tp] = tp_data[tp]  # original data for reference time point
+                    continue
+
+                result[tp] = tp_data[tp].deepcopy()
+                resliced_image = propagated_data_hr[tp].resliced_image
+                if resliced_image is not None:
+                    result[tp].segmentation = resliced_image
+
             logger.info(f"[Thread {thread_id}] Propagation completed successfully for timepoints {tp_list}")
                         
         except Exception as e:
@@ -165,6 +180,9 @@ class PropagationPipeline:
             
             logger.debug(f"[Thread {thread_id}] Cleanup completed")
 
+        return result
+
+
     def _run_partition(self, tp_partition: TPPartition):
         # create a list containing all time points
         all_tps = tp_partition._input.tp_target.copy()
@@ -182,6 +200,9 @@ class PropagationPipeline:
 
         # prepare propagation tasks
         tasks = []
+
+        # results container
+        results = dict[str, dict[int, TPData]]()
         
         # prepare forward propagation task
         if len(forward_tps) > 1:
@@ -217,19 +238,68 @@ class PropagationPipeline:
                 for future in as_completed(future_to_direction):
                     direction = future_to_direction[future]
                     try:
-                        future.result()
+                        directional_result = future.result()
+                        results[direction] = directional_result
                         logger.info(f"{direction} propagation completed successfully")
                     except Exception as exc:
                         logger.error(f"{direction} propagation failed with exception: {exc}", exc_info=True)
-                        raise
+                        sys.exit(1)
                         
         elif len(tasks):
             # execute single task sequentially
             direction, tp_data, tp_list = tasks[0]
             logger.info(f"Running {direction} propagation only")
-            self._run_unidirectional_propagation(tp_data, tp_partition._input.deepcopy(), tp_list, self._options)
+            results[direction] = self._run_unidirectional_propagation(tp_data, tp_partition._input.deepcopy(), tp_list, self._options)
         else:
             logger.info("No propagation tasks to execute (only reference timepoint)")
+
+        # combine directional results
+        result = dict[int, TPData]()
+        for direction, directional_result in results.items():
+            for tp, tp_data in directional_result.items():
+                result[tp] = tp_partition._tp_data[tp]  # original data
+                if tp_data.segmentation is not None:
+                    result[tp].segmentation = tp_data.segmentation
+
+        return result
+    
+
+    def write_results_to_disk(self, all_tp_output: dict[int, TPData]):
+        from utility.io.async_writer import async_writer
+        import os
+
+        if self._tp_partitions is None:
+            raise RuntimeError("No timepoint partitions available for writing results.")
+
+        tp_images = list[ImageWrapper]()
+        tp_segmentations = list[ImageWrapper]()
+
+        for tp in sorted(all_tp_output.keys()):
+            tp_data = all_tp_output[tp]
+            tp_images.append(tp_data.image)
+            if tp_data.segmentation is not None:
+                tp_segmentations.append(tp_data.segmentation)
+            else:
+                logger.error(f"Segmentation for time point {tp} is None, cannot write to disk.")
+                raise RuntimeError(f"Segmentation for time point {tp} is None.")
+
+        # Write images
+        ih = create_image_helper()
+        image_4d = ih.create_4d_image(tp_images)
+        seg_4d = ih.create_4d_image(tp_segmentations)
+
+        async_writer.submit_image(
+            image_4d,
+            os.path.join(self._options.output_directory, "image-4d.nii.gz")
+        )
+
+        async_writer.submit_image(
+            seg_4d,
+            os.path.join(self._options.output_directory, "seg-4d.nii.gz")
+        )
+
+
+
 
     def run(self):
         self._validate_input()
@@ -237,6 +307,21 @@ class PropagationPipeline:
 
         if self._tp_partitions is None:
             raise RuntimeError("No timepoint partitions available for processing.")
+        
+        partition_results = list[dict[int, TPData]]()
 
         for tp_partition in self._tp_partitions:
-            self._run_partition(tp_partition)
+            crnt_result = self._run_partition(tp_partition)
+            partition_results.append(crnt_result)
+
+        # create all tp output
+        all_tp_output = dict[int, TPData]()
+        for crnt_result in partition_results:
+            for tp, tp_data in crnt_result.items():
+                all_tp_output[tp] = tp_data
+
+        if self._options.write_result_to_disk:
+            self.write_results_to_disk(all_tp_output)
+
+
+        logger.info("Propagation pipeline completed successfully.")

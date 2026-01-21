@@ -30,3 +30,8 @@ class AbstractImageHelper(ABC):
     @abstractmethod
     def get_unique_labels(self, image: ImageWrapper) -> list[int]:
         pass
+
+
+    @abstractmethod
+    def create_4d_image(self, image_list: list[ImageWrapper]) -> ImageWrapper:
+        pass

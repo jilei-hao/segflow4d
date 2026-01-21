@@ -18,52 +18,69 @@ class CPUImageHelper(AbstractImageHelper):
     
 
     def resample(self, image: ImageWrapper, resample_factor: float, interpolation: InterpolationType) -> ImageWrapper:
+        image_data = image.get_data()
+        if image_data is None:
+            raise ValueError("Input image data is None.")
         
-        original_size = image.get_data().GetSize()
-        original_spacing = image.get_data().GetSpacing()
+        original_size = image_data.GetSize()
+        original_spacing = image_data.GetSpacing()
         new_size = [int(sz * resample_factor) for sz in original_size]
         new_spacing = [sp / resample_factor for sp in original_spacing]
 
         resample_filter = sitk.ResampleImageFilter()
         resample_filter.SetSize(new_size)
         resample_filter.SetOutputSpacing(new_spacing)
-        resample_filter.SetOutputDirection(image.get_data().GetDirection())
-        resample_filter.SetOutputOrigin(image.get_data().GetOrigin())
+        resample_filter.SetOutputDirection(image_data.GetDirection())
+        resample_filter.SetOutputOrigin(image_data.GetOrigin())
         resample_filter.SetInterpolator(sitk_interpolation_from_type(interpolation))
 
-        return ImageWrapper(resample_filter.Execute(image.get_data()))
+        return ImageWrapper(resample_filter.Execute(image_data))
     
 
     def binary_dilate(self, image: ImageWrapper, radius: int) -> ImageWrapper:
         dilate_filter = sitk.BinaryDilateImageFilter()
         dilate_filter.SetKernelRadius(radius)
         dilate_filter.SetForegroundValue(1)
-        return ImageWrapper(dilate_filter.Execute(image.get_data()))
+        image_data = image.get_data()
+        if image_data is None:
+            raise ValueError("Input image data is None.")
+        return ImageWrapper(dilate_filter.Execute(image_data))  
     
 
     def resample_to_reference(self, image: ImageWrapper, reference_image: ImageWrapper, interpolation: InterpolationType) -> ImageWrapper:
         resample_filter = sitk.ResampleImageFilter()
-        resample_filter.SetSize(reference_image.get_data().GetSize())
-        resample_filter.SetOutputSpacing(reference_image.get_data().GetSpacing())
-        resample_filter.SetOutputDirection(reference_image.get_data().GetDirection())
-        resample_filter.SetOutputOrigin(reference_image.get_data().GetOrigin())
+        data = reference_image.get_data()
+        if data is None:
+            raise ValueError("Reference image data is None.")
+        
+        image_data = image.get_data()
+        if image_data is None:
+            raise ValueError("Input image data is None.")
+        
+        resample_filter.SetSize(data.GetSize())
+        resample_filter.SetOutputSpacing(data.GetSpacing())
+        resample_filter.SetOutputDirection(data.GetDirection())
+        resample_filter.SetOutputOrigin(data.GetOrigin())
         resample_filter.SetInterpolator(sitk_interpolation_from_type(interpolation))
 
-        resampled = resample_filter.Execute(image.get_data())
+        resampled = resample_filter.Execute(image_data)
         
         # Preserve original pixel type
         cast_filter = sitk.CastImageFilter()
-        cast_filter.SetOutputPixelType(image.get_data().GetPixelID())
+        cast_filter.SetOutputPixelType(image_data.GetPixelID())
         return ImageWrapper(cast_filter.Execute(resampled))
     
     def extract_timepoint_image(self, image_4d: ImageWrapper, timepoint: int) -> ImageWrapper:
         extractor = sitk.ExtractImageFilter()
-        size = list(image_4d.get_data().GetSize())
+        image_data = image_4d.get_data()
+        if image_data is None:
+            raise ValueError("Input 4D image data is None.")
+        size = list(image_data.GetSize())
         size[3] = 0  # Extract along the 4th dimension
         index = [0, 0, 0, timepoint - 1]    # timepoint is 1-based index
         extractor.SetSize(size)
         extractor.SetIndex(index)
-        return ImageWrapper(extractor.Execute(image_4d.get_data()))
+        return ImageWrapper(extractor.Execute(image_data))
     
 
     def read_image(self, file_path: str) -> ImageWrapper:
@@ -72,7 +89,24 @@ class CPUImageHelper(AbstractImageHelper):
     
 
     def get_unique_labels(self, image: ImageWrapper) -> list[int]:
-        array_data = sitk.GetArrayFromImage(image.get_data())
+        if image is None:
+            return []
+        
+        data = image.get_data()
+        if data is None:
+            return []
+        
+        array_data = sitk.GetArrayFromImage(data)
         unique_labels = list(set(array_data.flatten()))
         unique_labels.sort()
         return unique_labels
+    
+
+    def create_4d_image(self, image_list: list[ImageWrapper]) -> ImageWrapper:
+        sitk_images = [img.get_data() for img in image_list]
+        for i, img in enumerate(sitk_images):
+            if img is None:
+                raise ValueError(f"Image data at index {i} is None.")
+        join_filter = sitk.JoinSeriesImageFilter()
+        image_4d = join_filter.Execute(sitk_images)
+        return ImageWrapper(image_4d)
