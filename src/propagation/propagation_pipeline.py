@@ -132,22 +132,19 @@ class PropagationPipeline:
             propagated_data_hr = strategy_hr.propagate(tp_input_data_hr, options)
             
             # update propagated results back to tp_partition
-            for tp in tp_list:
-                resliced_seg = propagated_data_hr[tp].resliced_image
-                if resliced_seg is None:
-                    raise RuntimeError(f"Resliced segmentation for time point {tp} is None.")
-                
-                crnt_tp_data = tp_data[tp]
-                crnt_tp_data.segmentation = resliced_seg
+            if options.debug:
+                from utility.io.async_writer import async_writer
+                import os
 
-                if options.debug:
-                    from utility.io.async_writer import async_writer
-                    import os
-                    if resliced_seg is not None:
-                        async_writer.submit_image(
-                            resliced_seg,
-                            os.path.join(options.debug_output_directory, f"seg-hr_tp-{tp:03d}.nii.gz")
-                        )
+                for tp in tp_list:
+                    resliced_seg = propagated_data_hr[tp].resliced_image
+                    if resliced_seg is None:
+                        raise RuntimeError(f"Resliced segmentation for time point {tp} is None.")
+
+                    async_writer.submit_image(
+                        resliced_seg,
+                        os.path.join(options.debug_output_directory, f"seg-hr_tp-{tp:03d}.nii.gz")
+                    )
 
             logger.info(f"[Thread {thread_id}] Propagation completed successfully for timepoints {tp_list}")
                         
@@ -243,32 +240,3 @@ class PropagationPipeline:
 
         for tp_partition in self._tp_partitions:
             self._run_partition(tp_partition)
-
-    def propagate(self, propagation_input: PropagationInput, options: PropagationOptions):
-        """Main propagation method"""
-        try:
-            # ...existing propagation code...
-            
-            # After submitting jobs, periodically check for fatal errors
-            for tp_group in propagation_input.tp_input_groups:
-                # Submit jobs...
-                futures = []  # Collect all futures
-                
-                # Wait for jobs with error checking
-                for future in as_completed(futures, timeout=300):  # 5 min timeout
-                    try:
-                        result = future.result()
-                        # Process result...
-                    except torch.cuda.OutOfMemoryError as e:
-                        logger.critical(f"Fatal OOM error: {e}")
-                        logger.critical("Terminating propagation")
-                        raise
-                    except Exception as e:
-                        logger.error(f"Job failed: {e}")
-                        raise
-        
-        except SystemExit:
-            raise  # Let sys.exit() propagate
-        except Exception as e:
-            logger.error(f"Propagation failed: {e}", exc_info=True)
-            raise

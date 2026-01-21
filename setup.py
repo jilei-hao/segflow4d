@@ -26,6 +26,7 @@ setup(
 		"matplotlib",
         "nvidia-ml-py3",
         "vtk",
+        "pyyaml",
 	],
 	entry_points={
 		"console_scripts": [

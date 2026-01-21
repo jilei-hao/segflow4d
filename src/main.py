@@ -40,7 +40,7 @@ def parse_arguments():
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--debug-dir', type=str, default='', help='Directory to store debug outputs')
 
-    parser.add_argument('--use-json-config', type=str, default='', help='Path to JSON configuration file')
+    parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
 
@@ -53,11 +53,11 @@ def parse_arguments():
 
     return args
 
-def load_json_config(config_path):
-    """Load and parse JSON configuration file"""
-    import json
+def load_config(config_path):
+    """Load and parse YAML configuration file"""
+    import yaml
     with open(config_path, 'r') as f:
-        config = json.load(f)
+        config = yaml.safe_load(f)
     return config
 
 def main():
@@ -66,8 +66,8 @@ def main():
     
     input_factory = PropagationInputFactory()
 
-    if args.use_json_config:
-        config = load_json_config(args.use_json_config)
+    if args.config:
+        config = load_config(args.config)
 
         configure_logging(config.get('log_level', args.log_level), config.get('log_dir', args.log_dir))
 
@@ -88,7 +88,7 @@ def main():
         tp_input_groups = config.get('tp_input_groups', [])
         
         if not tp_input_groups:
-            logger.error("No tp_input_groups found in JSON configuration")
+            logger.error("No tp_input_groups found in configuration")
             return
         
         for group in tp_input_groups:
