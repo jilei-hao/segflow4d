@@ -94,6 +94,12 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             if loss_type == 'cc':
                 loss_kwargs['cc_kernel_size'] = cc_kernel_size
             
+            # Extract mask ITK images if provided (needed for both stages)
+            itk_mask_fixed = mask_fixed.get_data() if mask_fixed is not None else None
+            if mask_moving is None and mask_fixed is not None:
+                mask_moving = mask_fixed
+            itk_mask_moving = mask_moving.get_data() if mask_moving is not None else None
+            
             # ==================================================================
             # Stage 1: Affine registration
             # ==================================================================
@@ -105,17 +111,12 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 fa_image_fixed = Image(itk_fixed, device=device_str)
                 fa_image_moving = Image(itk_moving, device=device_str)
 
-                if mask_fixed is not None:
-                    itk_mask_fixed = mask_fixed.get_data()
+                if itk_mask_fixed is not None:
                     fa_mask_fixed = Image(itk_mask_fixed, is_segmentation=True, device=device_str)
                     fa_image_fixed.array = fa_image_fixed.array * fa_mask_fixed.array
                     logger.debug("Applied fixed mask to fixed image")
 
-                if mask_moving is None and mask_fixed is not None:
-                    mask_moving = mask_fixed
-
-                if mask_moving is not None:
-                    itk_mask_moving = mask_moving.get_data()
+                if itk_mask_moving is not None:
                     fa_mask_moving = Image(itk_mask_moving, is_segmentation=True, device=device_str)
                     fa_image_moving.array = fa_image_moving.array * fa_mask_moving.array
                     logger.debug("Applied moving mask to moving image")
@@ -162,10 +163,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 fa_image_moving_def = Image(itk_moving, device=device_str)
                 
                 # Re-apply masks if needed
-                if mask_fixed is not None:
+                if itk_mask_fixed is not None:
                     fa_mask_fixed_def = Image(itk_mask_fixed, is_segmentation=True, device=device_str)
                     fa_image_fixed_def.array = fa_image_fixed_def.array * fa_mask_fixed_def.array
-                if mask_moving is not None:
+                if itk_mask_moving is not None:
                     fa_mask_moving_def = Image(itk_mask_moving, is_segmentation=True, device=device_str)
                     fa_image_moving_def.array = fa_image_moving_def.array * fa_mask_moving_def.array
                 

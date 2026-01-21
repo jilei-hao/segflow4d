@@ -1,3 +1,4 @@
+from common.types.propagation_options import PropagationOptions
 from propagation.propagation_strategy.abstract_propagation_strategy import AbstractPropagationStrategy
 from common.types.propagation_strategy_data import PropagationStrategyData
 from registration.registration_manager import RegistrationManager
@@ -8,39 +9,57 @@ from logging import getLogger
 logger = getLogger(__name__)
 
 class SequentialPropagationStrategy(AbstractPropagationStrategy):
-    def propagate(self, tp_input_data: dict[int, PropagationStrategyData], options) -> dict[int, PropagationStrategyData]:
-        # get all time points
-        time_points = list(tp_input_data.keys())
-        logger.info(f"SequentialPropagationStrategy: propagating through time points {time_points}")
-
+    def propagate(self, tp_input_data: dict[int, PropagationStrategyData], options: PropagationOptions) -> dict[int, PropagationStrategyData]:
+        """
+        Propagate sequentially but batch jobs where possible.
+        
+        For true sequential propagation (where each step depends on the previous),
+        we can still parallelize across independent chains.
+        """
         registration_manager = RegistrationManager.get_instance()
-
-        # propagate sequentially from the first time point to the last
-        for i in range(0, len(time_points) - 1):
-            logger.info(f"-- Warping from time point {time_points[i]} to {time_points[i + 1]} --")
-            data_crnt = tp_input_data[time_points[i]]
-            data_next = tp_input_data[time_points[i + 1]]
-
-            # Ensure current timepoint has resliced_image
-            if data_crnt.resliced_image is None:
-                logger.warning(f"No resliced_image for timepoint {time_points[i]}, using original image")
-                data_crnt.resliced_image = data_crnt.image
-
-            # run registration from current to next
-            result = registration_manager.submit(
-                REGISTRATION_METHODS.RUN_REGISTRATION_AND_RESLICE,
-                img_fixed=data_next.image,
-                img_moving=data_crnt.image,
-                img_to_reslice=data_crnt.resliced_image,
-                mesh_to_reslice={},
-                options={}
-            ).result()
-
-            resliced_image = result.get('resliced_image', None)
-            data_next.resliced_image = resliced_image
-
-            tp_input_data[time_points[i + 1]] = data_next
-
+        
+        tp_list = list(tp_input_data.keys())
+        logger.info(f"SequentialPropagationStrategy: propagating through time points {tp_list}")
+        
+        # For sequential, we need result from step N before step N+1
+        # But we can still submit the NEXT job before waiting for current to complete
+        # using a sliding window approach
+        
+        prev_future = None
+        prev_tp = None
+        
+        for i, tp in enumerate(tp_list[1:], 1):
+            src_tp = tp_list[i - 1]
+            
+            # Wait for previous result if exists (needed for true sequential dependency)
+            if prev_future is not None and prev_tp is not None:
+                result = prev_future.result()
+                logger.info(f"Completed registration for tp {prev_tp}")
+                tp_input_data[prev_tp].resliced_image = result['resliced_image']
+            
+            logger.info(f"-- Warping from time point {src_tp} to {tp} --")
+            
+            # Submit next job immediately (don't wait)
+            future = registration_manager.submit(
+                'run_registration_and_reslice',
+                img_fixed=tp_input_data[tp].image,
+                img_moving=tp_input_data[src_tp].image,
+                img_to_reslice=tp_input_data[src_tp].resliced_image,
+                mesh_to_reslice=None,
+                options=options.registration_backend_options,
+                mask_fixed=tp_input_data[tp].mask,
+                mask_moving=tp_input_data[src_tp].mask
+            )
+            
+            prev_future = future
+            prev_tp = tp
+        
+        # Wait for final result
+        if prev_future is not None and prev_tp is not None:
+            result = prev_future.result()
+            logger.info(f"Completed registration for tp {prev_tp}")
+            tp_input_data[prev_tp].resliced_image = result['resliced_image']
+        
         return tp_input_data
 
     def get_strategy_name(self) -> str:

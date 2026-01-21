@@ -1,3 +1,4 @@
+from common.types.propagation_options import PropagationOptions
 from propagation.propagation_strategy.abstract_propagation_strategy import AbstractPropagationStrategy
 from common.types.propagation_strategy_data import PropagationStrategyData
 from registration.registration_manager import RegistrationManager
@@ -8,56 +9,50 @@ from logging import getLogger
 logger = getLogger(__name__)
 
 class StarPropagationStrategy(AbstractPropagationStrategy):
-    def propagate(self, tp_input_data: dict[int, PropagationStrategyData], options) -> dict[int, PropagationStrategyData]:
-        # get all time points
-        time_points = list(tp_input_data.keys())
-        logger.info(f"StarPropagationStrategy: propagating through time points {time_points}")
-
+    def propagate(self, tp_input_data: dict[int, PropagationStrategyData], options: PropagationOptions) -> dict[int, PropagationStrategyData]:
+        """Propagate using star pattern - submit all jobs in parallel."""
         registration_manager = RegistrationManager.get_instance()
-
-        # propagate from reference time point to all other time points
-        reference_tp = time_points[0]
-        data_ref = tp_input_data[reference_tp]
         
-        # Ensure reference timepoint has resliced_image
-        if data_ref.resliced_image is None:
-            logger.warning(f"No resliced_image for reference timepoint {reference_tp}, using original image")
-            data_ref.resliced_image = data_ref.image
-
-        target_tps = time_points[1:]
+        tp_list = list(tp_input_data.keys())
+        ref_tp = tp_list[0]
+        target_tps = tp_list[1:]
         
-        if len(target_tps) == 0:
-            logger.info("No target timepoints to propagate to")
-            return tp_input_data
-
-        try:
-            # Run registrations sequentially - RegistrationManager handles resource management
-            for target_tp in target_tps:
-                logger.info(f"Warping from reference tp {reference_tp} to target tp {target_tp}")
-                
-                data_target = tp_input_data[target_tp]
-
-                # Run registration
-                result = registration_manager.submit(
-                    REGISTRATION_METHODS.RUN_REGISTRATION_AND_RESLICE,
-                    img_fixed=data_target.image,
-                    img_moving=data_ref.image,
-                    img_to_reslice=data_ref.resliced_image,
-                    mesh_to_reslice={},
-                    options={},
-                    mask_fixed=data_target.mask,
-                    mask_moving=data_ref.mask,
-                ).result()
-
-                resliced_image = result.get('resliced_image', None)
-                tp_input_data[target_tp].resliced_image = resliced_image
-                
+        logger.info(f"StarPropagationStrategy: propagating through time points {tp_list}")
+        
+        # Submit ALL jobs first (non-blocking)
+        futures = {}
+        for target_tp in target_tps:
+            logger.info(f"Submitting registration: reference tp {ref_tp} to target tp {target_tp}")
+            
+            future = registration_manager.submit(
+                'run_registration_and_reslice',
+                img_fixed=tp_input_data[target_tp].image,
+                img_moving=tp_input_data[ref_tp].image,
+                img_to_reslice=tp_input_data[ref_tp].resliced_image,
+                mesh_to_reslice=None,
+                options=options.registration_backend_options,
+                mask_fixed=tp_input_data[target_tp].mask,
+                mask_moving=tp_input_data[ref_tp].mask
+            )
+            futures[target_tp] = future
+        
+        logger.info(f"Submitted {len(futures)} registration jobs to queue")
+        
+        # Now collect results (this allows parallel execution)
+        results = {}
+        for target_tp, future in futures.items():
+            try:
+                result = future.result()  # Now we wait
                 logger.info(f"Completed registration for target tp {target_tp}")
-
-        except Exception as e:
-            logger.error(f"Registration failed: {e}", exc_info=True)
-            raise
-
+                results[target_tp] = result
+            except Exception as e:
+                logger.error(f"Registration failed for tp {target_tp}: {e}")
+                raise
+        
+        # Process results
+        for target_tp, result in results.items():
+            tp_input_data[target_tp].resliced_image = result['resliced_image']
+    
         return tp_input_data
 
     def get_strategy_name(self) -> str:
