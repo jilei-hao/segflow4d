@@ -16,6 +16,27 @@ class ImageWrapper(PropagationDataObject):
     def set_data(self, data: Optional[Image]):
         self._data = data
 
+    def get_origin(self) -> Optional[tuple]:
+        if self._data is None:
+            return None
+        return self._data.GetOrigin()
+    
+    def get_spacing(self) -> Optional[tuple]:
+        if self._data is None:
+            return None
+        return self._data.GetSpacing()
+    
+    def get_direction(self) -> Optional[tuple]:
+        if self._data is None:
+            return None
+        return self._data.GetDirection()
+    
+    def get_dimensions(self) -> Optional[tuple]:   
+        if self._data is None:
+            return None
+        return self._data.GetSize()
+
+
     def deepcopy(self) -> 'ImageWrapper':
         """Create a deep copy of ImageWrapper with independent pixel data."""
         if self._data is None:

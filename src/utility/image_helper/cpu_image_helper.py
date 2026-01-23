@@ -2,6 +2,8 @@ from .abstract_image_helper import AbstractImageHelper
 from common.types.interpolation_type import InterpolationType, sitk_interpolation_from_type
 from common.types.image_wrapper import ImageWrapper
 import SimpleITK as sitk
+from vtkmodules.vtkCommonDataModel import vtkImageData
+from vtkmodules.util.vtkConstants import VTK_UNSIGNED_CHAR, VTK_SHORT, VTK_UNSIGNED_SHORT, VTK_INT, VTK_UNSIGNED_INT, VTK_FLOAT, VTK_DOUBLE
 
 
 class CPUImageHelper(AbstractImageHelper):
@@ -110,3 +112,48 @@ class CPUImageHelper(AbstractImageHelper):
         join_filter = sitk.JoinSeriesImageFilter()
         image_4d = join_filter.Execute(sitk_images)
         return ImageWrapper(image_4d)
+    
+
+    def convert_to_vtk_image(self, image: ImageWrapper) -> vtkImageData:
+        image_data = image.get_data()
+        if image_data is None:
+            raise ValueError("Input image data is None.")
+        
+        # Convert SimpleITK image to numpy array
+        array_data = sitk.GetArrayFromImage(image_data)  # shape: [D, H, W]
+        
+        # Get image properties
+        spacing = image_data.GetSpacing()
+        origin = image_data.GetOrigin()
+        direction = image_data.GetDirection()
+        
+        # Create VTK image data
+        vtk_image = vtkImageData()
+        depth, height, width = array_data.shape
+        vtk_image.SetDimensions(width, height, depth)
+        vtk_image.SetSpacing(spacing)
+        vtk_image.SetOrigin(origin)
+        
+        # Map SimpleITK pixel type to VTK scalar type
+        pixel_id = image_data.GetPixelID()
+        vtk_type_map = {
+            sitk.sitkUInt8: VTK_UNSIGNED_CHAR,
+            sitk.sitkInt16: VTK_SHORT,
+            sitk.sitkUInt16: VTK_UNSIGNED_SHORT,
+            sitk.sitkInt32: VTK_INT,
+            sitk.sitkUInt32: VTK_UNSIGNED_INT,
+            sitk.sitkFloat32: VTK_FLOAT,
+            sitk.sitkFloat64: VTK_DOUBLE,
+        }
+        vtk_scalar_type = vtk_type_map.get(pixel_id, VTK_FLOAT)
+        
+        # Allocate scalars
+        vtk_image.AllocateScalars(vtk_scalar_type, 1)
+        
+        # Copy data to VTK image
+        for z in range(depth):
+            for y in range(height):
+                for x in range(width):
+                    vtk_image.SetScalarComponentFromFloat(x, y, z, 0, float(array_data[z, y, x]))
+        
+        return vtk_image

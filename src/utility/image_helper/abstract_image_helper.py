@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from common.types.interpolation_type import InterpolationType
 from common.types.image_wrapper import ImageWrapper
+from vtkmodules.vtkCommonDataModel import vtkImageData
 
 class AbstractImageHelper(ABC):
     @abstractmethod
@@ -34,4 +35,8 @@ class AbstractImageHelper(ABC):
 
     @abstractmethod
     def create_4d_image(self, image_list: list[ImageWrapper]) -> ImageWrapper:
+        pass
+
+    @abstractmethod
+    def convert_to_vtk_image(self, image: ImageWrapper) -> vtkImageData:
         pass

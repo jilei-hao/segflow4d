@@ -7,7 +7,7 @@ from common.types.propagation_options import PropagationOptions
 from SimpleITK import Image, ReadImage
 from vtkmodules.vtkCommonDataModel import vtkPolyData
 from typing import Optional
-from utility.mesh_helper import read_polydata
+from utility.mesh_helper.mesh_helper import read_polydata
 from logging import getLogger
 
 logger = getLogger(__name__)
