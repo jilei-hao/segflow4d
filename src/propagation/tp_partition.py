@@ -5,7 +5,7 @@ from common.types.image_wrapper import ImageWrapper
 from common.types.mesh_wrapper import MeshWrapper
 from utility.image_helper.image_helper_factory import create_image_helper
 from processing.image_processing import create_reference_mask, create_high_res_mask
-from common.types.tp_partition_input import TPPartitionInput
+from propagation.tp_partition_input import TPPartitionInput
 from logging import getLogger
 from utility.io.async_writer import async_writer
 import os

@@ -25,11 +25,11 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
             logger.info(f"Submitting registration: reference tp {ref_tp} to target tp {target_tp}")
             
             future = registration_manager.submit(
-                'run_registration_and_reslice',
+                REGISTRATION_METHODS.RUN_REGISTRATION_AND_RESLICE,
                 img_fixed=tp_input_data[target_tp].image,
                 img_moving=tp_input_data[ref_tp].image,
                 img_to_reslice=tp_input_data[ref_tp].resliced_image,
-                mesh_to_reslice=None,
+                mesh_to_reslice=tp_input_data[ref_tp].segmentation_mesh,
                 options=options.registration_backend_options,
                 mask_fixed=tp_input_data[target_tp].mask,
                 mask_moving=tp_input_data[ref_tp].mask
@@ -52,6 +52,7 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
         # Process results
         for target_tp, result in results.items():
             tp_input_data[target_tp].resliced_image = result['resliced_image']
+            tp_input_data[target_tp].segmentation_mesh = result['resliced_mesh']
     
         return tp_input_data
 

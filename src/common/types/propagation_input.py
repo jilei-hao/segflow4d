@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from common.types.image_wrapper import ImageWrapper
 from common.types.mesh_wrapper import MeshWrapper
 from common.types.tp_image_group import TPImageGroup
-from common.types.tp_partition_input import TPPartitionInput
+from propagation.tp_partition_input import TPPartitionInput
 from common.types.propagation_options import PropagationOptions
 from SimpleITK import Image, ReadImage
 from vtkmodules.vtkCommonDataModel import vtkPolyData

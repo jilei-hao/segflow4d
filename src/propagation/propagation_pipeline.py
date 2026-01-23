@@ -5,7 +5,7 @@ from common.types.propagation_options import PropagationOptions
 from common.types.propagation_strategy_data import PropagationStrategyData
 from common.types.propagation_strategy_name import PropagationStrategyName
 from common.types.tp_data import TPData
-from common.types.tp_partition_input import TPPartitionInput
+from propagation.tp_partition_input import TPPartitionInput
 from propagation.propagation_strategy.propagation_strategy_factory import PropagationStrategyFactory
 from propagation.tp_partition import TPPartition
 from registration.registration_manager import RegistrationManager
@@ -130,6 +130,7 @@ class PropagationPipeline:
 
             tp_ref = tp_list[0]
             tp_input_data_hr[tp_ref].resliced_image = ref_input.seg_ref.deepcopy()
+            tp_input_data_hr[tp_ref].segmentation_mesh = ref_input.seg_mesh_ref.deepcopy() if ref_input.seg_mesh_ref else None
 
             # run high-res propagation for segmentations
             propagated_data_hr = strategy_hr.propagate(tp_input_data_hr, options)
@@ -271,6 +272,11 @@ class PropagationPipeline:
         if self._tp_partitions is None:
             raise RuntimeError("No timepoint partitions available for writing results.")
 
+        # create output directories
+        os.makedirs(self._options.output_directory, exist_ok=True)
+        seg_mesh_output_dir = os.path.join(self._options.output_directory, "segmentation_meshes")
+        os.makedirs(seg_mesh_output_dir, exist_ok=True)
+
         tp_images = list[ImageWrapper]()
         tp_segmentations = list[ImageWrapper]()
 
@@ -297,6 +303,18 @@ class PropagationPipeline:
             seg_4d,
             os.path.join(self._options.output_directory, "seg-4d.nii.gz")
         )
+
+        # Write segmentation meshes
+        for tp in sorted(all_tp_output.keys()):
+            tp_data = all_tp_output[tp]
+            if tp_data.segmentation_mesh is not None:
+                mesh_output_path = os.path.join(seg_mesh_output_dir, f"seg-mesh_tp-{tp:03d}.vtp")
+                async_writer.submit_mesh(
+                    tp_data.segmentation_mesh,
+                    mesh_output_path
+                )
+            else:
+                logger.warning(f"Segmentation mesh for time point {tp} is None, skipping mesh write.")
 
 
 

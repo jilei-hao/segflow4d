@@ -10,6 +10,7 @@ from fireants.registration.greedy import GreedyRegistration
 import SimpleITK as sitk
 import numpy as np
 from utility.image_helper.image_helper_factory import create_image_helper
+from registration.registration_handler.fireants.gpu_mesh_warper import warp_mesh_vertices
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,20 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 
                 # Extract data immediately and copy to CPU
                 resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
+
+                # Reslice mesh
+                if mesh_to_reslice is not None:
+                    logger.info("Reslicing target mesh...")
+                    mesh_vertices = mesh_to_reslice.get_vertices()  # numpy array (N, 3)
+                    mesh_vertices_tensor = torch.from_numpy(mesh_vertices).to(device_str, dtype=torch.float32)
+                    warped_vertices = warp_mesh_vertices(
+                        mesh_vertices_tensor,
+                        deformable_reg.get_warped_coordinates(batch_fixed_def, batch_moving_def, None),
+                        img_fixed,
+                        img_moving
+                    )
+                    warped_vertices_np = warped_vertices.cpu().detach().numpy()
+                    resliced_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
             
             # Clean up deformable stage
             logger.debug("Deleting deformable stage objects...")
