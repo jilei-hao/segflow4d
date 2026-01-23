@@ -91,40 +91,6 @@ class MultiLabelSegMeshGenerator(AbstractSegmentationMeshGenerator):
         
         return MeshWrapper(output_polydata)
 
-    def _numpy_to_vtk_image(
-        self, 
-        data: np.ndarray, 
-        origin: tuple, 
-        spacing: tuple
-    ) -> vtk.vtkImageData:
-        """
-        Convert a numpy array to VTK image data with proper spatial information.
-
-        Args:
-            data: numpy array [D, H, W]
-            origin: image origin (x, y, z)
-            spacing: image spacing (x, y, z)
-
-        Returns:
-            vtkImageData with proper spatial information
-        """
-        vtk_image = vtk.vtkImageData()
-        
-        # VTK expects dimensions as (W, H, D)
-        depth, height, width = data.shape
-        vtk_image.SetDimensions(width, height, depth)
-        vtk_image.SetOrigin(origin)
-        vtk_image.SetSpacing(spacing)
-        
-        # Flatten and convert to VTK array
-        # Note: need to transpose for VTK's expected order
-        flat_data = np.ascontiguousarray(data.ravel(order='F'))
-        vtk_array = numpy_to_vtk(flat_data, deep=True)
-        vtk_array.SetName("Labels")
-        
-        vtk_image.GetPointData().SetScalars(vtk_array)
-        
-        return vtk_image
 
     def _add_label_cell_data(self, polydata: vtkPolyData):
         """

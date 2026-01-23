@@ -2,10 +2,10 @@ from processing.segmentation_mesh_generator.multi_label_seg_mesh_generator impor
 from common.types.image_wrapper import ImageWrapper
 from common.types.mesh_wrapper import MeshWrapper
 from utility.image_helper.image_helper_factory import create_image_helper
-from utility.mesh_helper.mesh_helper import write_polydata
+from utility.mesh_helper.mesh_helper import write_polydata, change_coordinate_system
 from logging import getLogger, basicConfig
 
-basicConfig(level="INFO")
+basicConfig(level="DEBUG")
 logger = getLogger(__name__)
 
 
@@ -30,7 +30,8 @@ def main():
     options = MultiLabelSegMeshGeneratorOptions(label_list=args.labels, method=args.method)
     mesh_generator.set_inputs(image, options)
     mesh = mesh_generator.generate_mesh()
-    write_polydata(mesh.get_data(), args.output_mesh)
+    lps_mesh = change_coordinate_system(mesh.get_data(), from_system="RAS", to_system="LPS")
+    write_polydata(lps_mesh, args.output_mesh)
 
     logger.info("Mesh generation completed and saved to output")
 
