@@ -157,6 +157,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # ==================================================================
             logger.info("Starting deformable registration...")
             start_deformable = time()
+            resliced_seg_mesh = None
             
             with torch.cuda.device(device_id):
                 # Recreate batch images for deformable stage to ensure device consistency
@@ -220,7 +221,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                         img_moving
                     )
                     warped_vertices_np = warped_vertices.cpu().detach().numpy()
-                    resliced_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
+                    resliced_seg_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
             
             # Clean up deformable stage
             logger.debug("Deleting deformable stage objects...")
@@ -262,16 +263,20 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             resliced_itk.SetDirection(reslice_meta['direction'])
             
             # Mesh reslicing to be implemented
-            resliced_mesh = None
+            resliced_meshes = []
             if mesh_to_reslice is not None:
                 logger.warning("Mesh reslicing not yet implemented")
+
+            if resliced_seg_mesh is None:
+                raise RuntimeError("Resliced segmentation mesh is None after reslicing")
             
             logger.info("Registration and reslicing completed successfully")
             
             return {
                 'affine_matrix': affine_matrix.numpy().copy(),
                 'resliced_image': ImageWrapper(resliced_itk),
-                'resliced_mesh': resliced_mesh
+                'resliced_segmentation_mesh': resliced_seg_mesh,
+                'resliced_meshes': resliced_meshes
             }
         
         except Exception as e:

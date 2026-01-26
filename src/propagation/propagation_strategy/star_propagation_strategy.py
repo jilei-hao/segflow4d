@@ -52,7 +52,7 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
         # Process results
         for target_tp, result in results.items():
             tp_input_data[target_tp].resliced_image = result['resliced_image']
-            tp_input_data[target_tp].segmentation_mesh = result['resliced_mesh']
+            tp_input_data[target_tp].segmentation_mesh = result['resliced_segmentation_mesh']
     
         return tp_input_data
 

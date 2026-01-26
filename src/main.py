@@ -1,10 +1,25 @@
 import os
+import sys
+import logging
 from propagation.propagation_pipeline import PropagationPipeline
 from common.types.propagation_input import PropagationInputFactory
 from propagation_io.async_writer import async_writer
-import logging
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
+class StreamToLogger:
+    """Redirect stdout/stderr to logger"""
+    def __init__(self, logger, log_level=logging.INFO):
+        self.logger = logger
+        self.log_level = log_level
+        self.linebuf = ''
+
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.logger.log(self.log_level, line.rstrip())
+
+    def flush(self):
+        pass
 
 def configure_logging(log_level='INFO', log_dir=''):
     log_level_int = getattr(logging, log_level.upper(), logging.INFO)
@@ -19,8 +34,14 @@ def configure_logging(log_level='INFO', log_dir=''):
     logging.basicConfig(
         level=log_level_int,
         format='[%(asctime)s - %(name)s - %(levelname)s] - %(message)s',
-        handlers=handlers
+        handlers=handlers,
+        force=True
     )
+    
+    # Redirect stdout and stderr to logging
+    if log_level=='DEBUG':
+        sys.stdout = StreamToLogger(logging.getLogger('stdout'), logging.INFO)
+        sys.stderr = StreamToLogger(logging.getLogger('stderr'), logging.ERROR)
 
 logger = logging.getLogger(__name__)
 

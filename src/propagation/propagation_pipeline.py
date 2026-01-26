@@ -141,6 +141,9 @@ class PropagationPipeline:
                     resliced_seg = propagated_data_hr[tp].resliced_image
                     if resliced_seg is None:
                         raise RuntimeError(f"Resliced segmentation for time point {tp} is None.")
+                    resliced_segmentation_mesh = propagated_data_hr[tp].segmentation_mesh
+                    if resliced_segmentation_mesh is None:
+                        raise RuntimeError(f"Resliced segmentation mesh for time point {tp} is None.")
 
                     async_writer.submit_image(
                         resliced_seg,
@@ -158,6 +161,9 @@ class PropagationPipeline:
                 resliced_image = propagated_data_hr[tp].resliced_image
                 if resliced_image is not None:
                     result[tp].segmentation = resliced_image
+                resliced_mesh = propagated_data_hr[tp].segmentation_mesh
+                if resliced_mesh is not None:
+                    result[tp].segmentation_mesh = resliced_mesh
 
             logger.info(f"[Thread {thread_id}] Propagation completed successfully for timepoints {tp_list}")
                         
@@ -258,6 +264,10 @@ class PropagationPipeline:
                 result[tp] = tp_partition._tp_data[tp]  # original data
                 if tp_data.segmentation is not None:
                     result[tp].segmentation = tp_data.segmentation
+                
+                logger.debug(f"TP {tp} segmetation-mesh: {tp_data.segmentation_mesh}")
+                if tp_data.segmentation_mesh is not None:
+                    result[tp].segmentation_mesh = tp_data.segmentation_mesh
 
         return result
     
