@@ -1,4 +1,8 @@
-from typing import Optional
+import os
+import sys
+import logging
+import threading
+
 from common.types.image_wrapper import ImageWrapper
 from common.types.propagation_input import PropagationInput
 from common.types.propagation_options import PropagationOptions
@@ -11,11 +15,9 @@ from propagation.tp_partition import TPPartition
 from registration.registration_manager import RegistrationManager
 from utility.image_helper.image_helper_factory import create_image_helper
 from processing.image_processing import create_high_res_mask
-import logging
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import sys
-import torch
+from propagation_io.async_writer import async_writer
+
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +97,6 @@ class PropagationPipeline:
                 tp_data[tp].mask_high_res = high_res_mask
                 
                 if options.debug:
-                    from utility.io.async_writer import async_writer
-                    import os
                     if resliced_mask is not None:
                         async_writer.submit_image(
                             resliced_mask,
@@ -137,9 +137,6 @@ class PropagationPipeline:
             
             # update propagated results back to tp_partition
             if options.debug:
-                from utility.io.async_writer import async_writer
-                import os
-
                 for tp in tp_list:
                     resliced_seg = propagated_data_hr[tp].resliced_image
                     if resliced_seg is None:
@@ -266,15 +263,12 @@ class PropagationPipeline:
     
 
     def write_results_to_disk(self, all_tp_output: dict[int, TPData]):
-        from utility.io.async_writer import async_writer
-        import os
-
         if self._tp_partitions is None:
             raise RuntimeError("No timepoint partitions available for writing results.")
 
         # create output directories
         os.makedirs(self._options.output_directory, exist_ok=True)
-        seg_mesh_output_dir = os.path.join(self._options.output_directory, "segmentation_meshes")
+        seg_mesh_output_dir = os.path.join(self._options.output_directory, "segmentation-mesh")
         os.makedirs(seg_mesh_output_dir, exist_ok=True)
 
         tp_images = list[ImageWrapper]()

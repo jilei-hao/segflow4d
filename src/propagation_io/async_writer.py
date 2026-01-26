@@ -1,9 +1,11 @@
 import threading
 import queue
+import time
 from typing import Callable, Any, NamedTuple, Optional
-
 from common.types.image_wrapper import ImageWrapper
 from common.types.mesh_wrapper import MeshWrapper
+from propagation_io.image_writers import sitk_image_writer
+from propagation_io.mesh_writers import vtk_polydata_writer
 from logging import getLogger
 
 logger = getLogger(__name__)
@@ -31,14 +33,13 @@ class AsyncWriter:
 
     def submit_image(self, image: ImageWrapper, filename: str) -> None:
         """Enqueue a write task for an image using the default image writer."""
-        from utility.io.image_writers import sitk_image_writer
+        
         sitk_image = image.get_data()
         self._q.put(_Task(writer=sitk_image_writer, data=sitk_image, filename=filename))
         logger.info(f"AsyncWriter: Submitted image write task for {filename}")
         
     def submit_mesh(self, mesh: MeshWrapper, filename: str) -> None:
         """Enqueue a write task for a mesh using the default mesh writer."""
-        from utility.io.mesh_writers import vtk_polydata_writer
         polydata = mesh.get_data()
         self._q.put(_Task(writer=vtk_polydata_writer, data=polydata, filename=filename))
         logger.info(f"AsyncWriter: Submitted mesh write task for {filename}")
@@ -57,7 +58,10 @@ class AsyncWriter:
                 break
             try:
                 logger.info(f"AsyncWriter: Writing file {task.filename}")
+                start_time = time.time()
                 task.writer(task.data, task.filename)
+                elapsed_time = time.time() - start_time
+                logger.debug(f"AsyncWriter: Completed write task for {task.filename} (took {elapsed_time:.3f}s)")
             except Exception as e:
                 logger.error(f"Error writing file {task.filename}: {e}")
             finally:

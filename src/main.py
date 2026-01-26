@@ -1,7 +1,7 @@
 import os
 from propagation.propagation_pipeline import PropagationPipeline
 from common.types.propagation_input import PropagationInputFactory
-from utility.io.async_writer import async_writer
+from propagation_io.async_writer import async_writer
 import logging
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
@@ -11,7 +11,10 @@ def configure_logging(log_level='INFO', log_dir=''):
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, 'segflow4d.log')
+        # add a timestamped log file
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file = os.path.join(log_dir, f'segflow4d_{timestamp}.log')
         handlers.append(logging.FileHandler(log_file))
     logging.basicConfig(
         level=log_level_int,
