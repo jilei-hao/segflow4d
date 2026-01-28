@@ -36,7 +36,7 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
                 result = prev_future.result()
                 logger.info(f"Completed registration for tp {prev_tp}")
                 tp_input_data[prev_tp].resliced_image = result['resliced_image']
-                tp_input_data[prev_tp].segmentation_mesh = result['resliced_mesh']
+                tp_input_data[prev_tp].segmentation_mesh = result['resliced_segmentation_mesh']
             logger.info(f"-- Warping from time point {src_tp} to {tp} --")
             
             # Submit next job immediately (don't wait)

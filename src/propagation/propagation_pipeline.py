@@ -31,7 +31,7 @@ class PropagationPipeline:
         # initialize registration manager
         self._registration_manager = RegistrationManager(
             registration_backend=self._options.registration_backend,
-            required_vram_mb=18000,  # 18G
+            required_vram_mb=5000,  # 5G
             vram_check_interval=0.5  # seconds
         )
 

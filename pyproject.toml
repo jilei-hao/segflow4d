@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "segflow4d"
+version = "0.1.0"
+description = "Create 4D segmentation from sparse segmentations using image registration"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = ""}]
+dependencies = [
+    "torch>=1.8",
+    "SimpleITK",
+    "fireants",
+    "matplotlib",
+    "nvidia-ml-py3",
+    "vtk",
+    "pyyaml",
+]
+
+[project.scripts]
+segflow4d = "main:main"
+run-fireants = "registration.fireants.run_fireants:main"
+create-reference-mask = "processing.cli.create_reference_mask:main"
+create-tp-images = "processing.cli.create_tp_images:main"
+resample-to-reference = "processing.cli.resample_to_reference:main"
+mesh-gen = "processing.cli.ml_seg_mesh_gen:main"
+test_registration_manager = "registration.tests.test_registration_manager:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

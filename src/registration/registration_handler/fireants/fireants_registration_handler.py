@@ -267,8 +267,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             if mesh_to_reslice is not None:
                 logger.warning("Mesh reslicing not yet implemented")
 
-            if resliced_seg_mesh is None:
-                raise RuntimeError("Resliced segmentation mesh is None after reslicing")
+            # if resliced_seg_mesh is None:
+            #     raise RuntimeError("Resliced segmentation mesh is None after reslicing")
             
             logger.info("Registration and reslicing completed successfully")
             

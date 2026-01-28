@@ -1,0 +1,20 @@
+image4d: /path/to/4d_image.tif
+output: /path/to/output_directory
+log_level: INFO
+lowres_factor: 0.5
+dilation_radius: 2
+registration_backend: fireants
+debug: false
+debug_dir: /path/to/debug_output
+tp_input_groups:
+  - tp_ref: 0
+    tp_targets: [1, 2, 3]
+    seg_ref: /path/to/seg_ref_tp0.tif
+    additional_meshes:
+      mesh1: /path/to/mesh1_tp0.obj
+      mesh2: /path/to/mesh2_tp0.obj
+  - tp_ref: 5
+    tp_targets: [4, 6, 7]
+    seg_ref: /path/to/seg_ref_tp5.tif
+    additional_meshes:
+      mesh1: /path/to/mesh1_tp5.obj
