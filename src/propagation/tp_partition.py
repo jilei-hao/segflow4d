@@ -7,7 +7,7 @@ from utility.image_helper.image_helper_factory import create_image_helper
 from processing.image_processing import create_reference_mask, create_high_res_mask
 from propagation.tp_partition_input import TPPartitionInput
 from logging import getLogger
-from propagation_io.async_writer import async_writer
+from utility.file_writer import async_writer
 import os
 
 logger = getLogger(__name__)

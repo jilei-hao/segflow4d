@@ -4,11 +4,30 @@ import time
 from typing import Callable, Any, NamedTuple, Optional
 from common.types.image_wrapper import ImageWrapper
 from common.types.mesh_wrapper import MeshWrapper
-from propagation_io.image_writers import sitk_image_writer
-from propagation_io.mesh_writers import vtk_polydata_writer
 from logging import getLogger
+from SimpleITK import Image, WriteImage
+from vtkmodules.vtkCommonDataModel import vtkPolyData
+from vtkmodules.vtkIOXML import vtkXMLPolyDataWriter
+from vtkmodules.vtkIOLegacy import vtkPolyDataWriter
 
 logger = getLogger(__name__)
+
+def sitk_image_writer(image: Image, file_path: str):
+    WriteImage(image, file_path)
+
+def vtk_polydata_writer(polydata: vtkPolyData, file_path: str):
+    """Writes a VTK PolyData object to a file."""
+    if file_path.endswith('.vtp'):
+        writer = vtkXMLPolyDataWriter()
+        writer.SetFileName(file_path)
+        writer.SetInputData(polydata)
+        writer.Write()
+        return
+    
+    writer = vtkPolyDataWriter()
+    writer.SetFileName(file_path)
+    writer.SetInputData(polydata)
+    writer.Write()
 
 # Writer signature: writer(data, filename)
 WriterFn = Callable[[Any, str], None]

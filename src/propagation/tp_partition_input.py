@@ -1,7 +1,6 @@
 from common.types.mesh_wrapper import MeshWrapper
 from common.types.image_wrapper import ImageWrapper
 from typing import Optional
-import copy
 from processing.segmentation_mesh_generator.multi_label_seg_mesh_generator import (
     MultiLabelSegMeshGenerator, MultiLabelSegMeshGeneratorOptions, MultiLabelSegMeshMethods
 )

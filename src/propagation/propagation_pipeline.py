@@ -16,7 +16,7 @@ from registration.registration_manager import RegistrationManager
 from utility.image_helper.image_helper_factory import create_image_helper
 from processing.image_processing import create_high_res_mask
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from propagation_io.async_writer import async_writer
+from utility.file_writer import async_writer
 
 
 logger = logging.getLogger(__name__)
