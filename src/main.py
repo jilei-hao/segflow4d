@@ -3,7 +3,7 @@ import sys
 import logging
 from propagation.propagation_pipeline import PropagationPipeline
 from common.types.propagation_input import PropagationInputFactory
-from propagation_io.async_writer import async_writer
+from utility.file_writer import async_writer
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 

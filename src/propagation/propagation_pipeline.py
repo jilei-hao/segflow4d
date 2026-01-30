@@ -31,7 +31,7 @@ class PropagationPipeline:
         # initialize registration manager
         self._registration_manager = RegistrationManager(
             registration_backend=self._options.registration_backend,
-            required_vram_mb=5000,  # 5G
+            required_vram_mb=input.options.minimum_required_vram_gb * 1024,  # 10G
             vram_check_interval=0.5  # seconds
         )
 
@@ -143,7 +143,8 @@ class PropagationPipeline:
                         raise RuntimeError(f"Resliced segmentation for time point {tp} is None.")
                     resliced_segmentation_mesh = propagated_data_hr[tp].segmentation_mesh
                     if resliced_segmentation_mesh is None:
-                        raise RuntimeError(f"Resliced segmentation mesh for time point {tp} is None.")
+                        # raise RuntimeError(f"Resliced segmentation mesh for time point {tp} is None.")
+                        logger.warning(f"Resliced segmentation mesh for time point {tp} is None, skipping debug write.")
 
                     async_writer.submit_image(
                         resliced_seg,

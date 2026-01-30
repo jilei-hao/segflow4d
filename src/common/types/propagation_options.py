@@ -14,6 +14,7 @@ class PropagationOptions:
     output_directory: str = ""
     debug: bool = False
     debug_output_directory: str = ""
+    minimum_required_vram_gb: int = 10
 
     def __post_init__(self):
         pass

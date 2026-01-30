@@ -18,8 +18,8 @@ def main():
     parser.add_argument("--input-mov", type=str, required=True, help="/path/to/mov/image")
     parser.add_argument("--fix-mask", type=str, help="/path/to/fix/mask")
     parser.add_argument("--mov-mask", type=str, help="/path/to/mov/mask")
-    parser.add_argument("--input-to-warp", type=str, help="/path/to/image/to/warp")
-    parser.add_argument("--output-warp", type=str, default="warped_image.nii.gz", help="Output path for warped image")
+    parser.add_argument("--seg-to-warp", type=str, help="/path/to/image/to/warp")
+    parser.add_argument("--output-warped", type=str, default="warped_image.nii.gz", help="Output path for warped image")
     args = parser.parse_args()
 
 
@@ -44,17 +44,18 @@ def main():
         
 
     # load image to warp if provided
-    image_to_warp = None
-    if args.input_to_warp is not None:
-        image_to_warp = Image.load_file(args.input_to_warp, is_segmentation=True)
+    seg_to_warp = None
+    if args.seg_to_warp is not None:
+        seg_to_warp = Image.load_file(args.seg_to_warp, is_segmentation=False) # turning off segmentation for large multi-label images
     
     # Batchify them (we only have a single image per batch, but we can pass multiple images)
     batch1 = BatchedImages([image1])
     batch2 = BatchedImages([image2])
     
-    batch_to_warp = batch2
-    if image_to_warp is not None:
-        batch_to_warp = BatchedImages([image_to_warp])
+    seg_batch_to_warp = batch2
+    if seg_to_warp is not None:
+        seg_batch_to_warp = BatchedImages([seg_to_warp])
+        seg_batch_to_warp.interpolate_mode = 'nearest'  # for multi-label segmentation
 
     
     # Check device name
@@ -85,7 +86,7 @@ def main():
     # Run registration
     start = time()
     affine.optimize()
-    moved = affine.evaluate(batch1, batch_to_warp)
+    seg_affine_warped = affine.evaluate(batch1, seg_batch_to_warp)
     end = time()
     print(f"Affine registration runtime: {end - start:.2f} seconds")
 
@@ -114,38 +115,36 @@ def main():
     print(f"Deformable registration runtime: {end - start:.2f} seconds")
     
     # Get moved image
-    moved = reg.evaluate(batch1, batch_to_warp)
+    moved = reg.evaluate(batch1, seg_batch_to_warp)
 
     # Save moved image
-    print(f"\nSaving moved image to {args.output_warp} ...")
+    print(f"\nSaving moved image to {args.output_warped} ...")
     
-    if image_to_warp is not None:
+    if seg_to_warp is not None:
         # For segmentation, the interpolator type is set to 'nearest'
         # This is done automatically by is_segmentation=True
-        batch_to_warp = BatchedImages([image_to_warp])
-        moved = reg.evaluate(batch1, batch_to_warp)
+        seg_resliced = reg.evaluate(batch1, seg_batch_to_warp)
         
         # Convert tensor back to SimpleITK image manually
         import numpy as np
         
-        moved_tensor = moved[0].detach()
-        moved_np = moved_tensor.cpu().numpy()
+        resliced_tensor = seg_resliced[0].detach().cpu().numpy()
         
-        if moved_tensor.shape[0] == 1:
-            # Binary segmentation - threshold at 0.5
-            moved_labels = (moved_np[0] > 0.5).astype('uint8')
+        if resliced_tensor.ndim == 4:
+            moved_labels = resliced_tensor[0]
         else:
-            # Multi-class - take argmax
-            moved_labels = np.argmax(moved_np, axis=0).astype('uint8')
+            moved_labels = resliced_tensor
+
+        resliced_labels = np.round(moved_labels).astype(np.uint8)
         
-        itk_moved = sitk.GetImageFromArray(moved_labels)
-        itk_moved.SetSpacing(image_to_warp.itk_image.GetSpacing())
-        itk_moved.SetOrigin(image_to_warp.itk_image.GetOrigin())
-        itk_moved.SetDirection(image_to_warp.itk_image.GetDirection())
+        itk_moved = sitk.GetImageFromArray(resliced_labels)
+        itk_moved.SetSpacing(seg_to_warp.itk_image.GetSpacing())
+        itk_moved.SetOrigin(seg_to_warp.itk_image.GetOrigin())
+        itk_moved.SetDirection(seg_to_warp.itk_image.GetDirection())
         
-        sitk.WriteImage(itk_moved, args.output_warp)
+        sitk.WriteImage(itk_moved, args.output_warped)
     else:
-        reg.save_moved_images(moved, args.output_warp)
+        reg.save_moved_images(moved, args.output_warped)
         
 
 if __name__ == "__main__":
