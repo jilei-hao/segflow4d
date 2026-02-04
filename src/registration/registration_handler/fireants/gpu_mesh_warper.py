@@ -52,3 +52,10 @@ def warp_mesh_vertices(vertices, warp_grid, fixed_images: ImageWrapper, moving_i
     warped_vertices = new_voxel * moving_spacing + moving_origin
     
     return warped_vertices
+
+
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()

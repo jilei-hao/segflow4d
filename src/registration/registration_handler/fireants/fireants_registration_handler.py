@@ -1,4 +1,6 @@
 from common.types.image_wrapper import ImageWrapper
+from common.types.propagation_options import PropagationOptions
+from registration.registration_handler.fireants.fireants_registration_options import FireantsRegistrationOptions
 from registration import AbstractRegistrationHandler
 import logging
 import torch
@@ -43,10 +45,41 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
     def run_reslice_mesh(self, mesh_to_reslice, img_reference, options):
         pass
 
+    def _get_warp_image_from_tensor(self, warp_field: torch.Tensor, reference_image: ImageWrapper) -> ImageWrapper:
+        reference_image_data = reference_image.get_data()
+        if reference_image_data is None:
+            raise ValueError("Reference image data is None when creating warp image")
+        
+        # Extract numpy array and move to CPU
+        warp_field_np = warp_field.detach().cpu().numpy()  # Shape: [N, H, W, D, dims] or [N, H, W, dims]
+
+        # Remove batch dimension if present
+        if warp_field_np.ndim == 5:  # 3D: [1, D, H, W, 3]
+            warp_field_np = warp_field_np[0]  # [D, H, W, 3]
+        elif warp_field_np.ndim == 4:  # 2D: [1, H, W, 2]
+            warp_field_np = warp_field_np[0]  # [H, W, 2]
+
+        # Reorder from [D, H, W, 3] to [3, D, H, W] for SimpleITK multi-component format
+        warp_field_np = np.moveaxis(warp_field_np, -1, 0)
+
+        # Create SimpleITK image as multi-component (vector image)
+        warp_image = sitk.GetImageFromArray(warp_field_np, isVector=True)
+
+        # Copy metadata from fixed image
+        warp_image.SetSpacing(reference_image_data.GetSpacing())
+        warp_image.SetOrigin(reference_image_data.GetOrigin())
+        warp_image.SetDirection(reference_image_data.GetDirection())
+
+        logger.debug(f"Warp image created with shape: {warp_image.GetSize()}, components: {warp_image.GetNumberOfComponentsPerPixel()}")
+
+        return ImageWrapper(warp_image)
+
 
     def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options, mask_fixed=None, mask_moving=None) -> dict:
         """
         Perform affine + deformable registration and reslice images/segmentations.
+        
+        Note: options may come as either PropagationOptions or dict due to multiprocessing serialization.
         """
         
         # Get the current device that was already set by caller
@@ -56,18 +89,35 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         
         # Ensure all operations happen on this device
         torch.cuda.set_device(device_id)
+
+        # Handle both PropagationOptions and dict (from multiprocessing serialization)
+        if isinstance(options, dict):
+            # options itself is a dict due to multiprocessing
+            backend_options_dict = options.get('registration_backend_options', {})
+            if isinstance(backend_options_dict, dict):
+                backend_options = FireantsRegistrationOptions(**backend_options_dict)
+            else:
+                backend_options = backend_options_dict
+        else:
+            # options is a PropagationOptions object
+            backend_options = options.registration_backend_options
+            if isinstance(backend_options, dict):
+                backend_options = FireantsRegistrationOptions(**backend_options)
         
-        # Extract options with defaults
-        scales = options.get('scales', [4.0, 2.0, 1.0])
-        affine_iterations = options.get('affine_iterations', [200, 100, 50])
-        deformable_iterations = options.get('deformable_iterations', [200, 100, 25])
-        affine_lr = options.get('affine_lr', 3e-3)
-        deformable_lr = options.get('deformable_lr', 0.5)
-        loss_type = options.get('loss_type', 'mse')
-        cc_kernel_size = options.get('cc_kernel_size', 3)
-        deformation_type = options.get('deformation_type', 'compositive')
-        smooth_grad_sigma = options.get('smooth_grad_sigma', 3.0)
-        smooth_warp_sigma = options.get('smooth_warp_sigma', 1.5)
+        if not isinstance(backend_options, FireantsRegistrationOptions):
+            raise ValueError("Expected FireantsRegistrationOptions or dict for FireantsRegistrationHandler")
+        
+        # Extract options
+        scales = backend_options.scales
+        affine_iterations = backend_options.affine_iterations
+        deformable_iterations = backend_options.deformable_iterations
+        affine_lr = backend_options.affine_lr
+        deformable_lr = backend_options.deformable_lr
+        loss_type = backend_options.loss_type
+        cc_kernel_size = backend_options.cc_kernel_size
+        deformation_type = backend_options.deformation_type
+        smooth_grad_sigma = backend_options.smooth_grad_sigma
+        smooth_warp_sigma = backend_options.smooth_warp_sigma
         
         try:
             # Get ITK images directly
@@ -209,6 +259,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 # Extract data immediately and copy to CPU
                 resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
 
+                # Get Warp Image
+                warp_field = deformable_reg.get_warped_coordinates(batch_fixed_def, batch_moving_def, None)
+                warp_image = self._get_warp_image_from_tensor(warp_field, img_fixed)
+
                 # Reslice mesh
                 if mesh_to_reslice is not None:
                     logger.info("Reslicing target mesh...")
@@ -216,7 +270,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                     mesh_vertices_tensor = torch.from_numpy(mesh_vertices).to(device_str, dtype=torch.float32)
                     warped_vertices = warp_mesh_vertices(
                         mesh_vertices_tensor,
-                        deformable_reg.get_warped_coordinates(batch_fixed_def, batch_moving_def, None),
+                        warp_field,
                         img_fixed,
                         img_moving
                     )
