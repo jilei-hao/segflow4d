@@ -35,9 +35,42 @@ class MeshWrapper(PropagationDataObject):
         # Replace the entire points array
         self._data.GetPoints().SetData(vtk_array)
         self._data.Modified()
+        
+        return self  # Return self to allow method chaining and assignment
 
 
     def deepcopy(self) -> 'MeshWrapper':
         mesh_copy = vtkPolyData()
         mesh_copy.DeepCopy(self._data)
         return MeshWrapper(mesh_copy)
+
+
+    def __getstate__(self):
+        """Prepare object for pickling by converting VTK data to serializable format."""
+        from vtkmodules.vtkIOXML import vtkXMLPolyDataWriter
+        import io
+        import base64
+        
+        # Write VTK data to string
+        writer = vtkXMLPolyDataWriter()
+        writer.SetInputData(self._data)
+        writer.SetWriteToOutputString(True)
+        writer.Write()
+        
+        # Get the XML string and encode to bytes
+        xml_string = writer.GetOutputString()
+        
+        return {'mesh_data': xml_string}
+
+
+    def __setstate__(self, state):
+        """Restore object from pickled state by reconstructing VTK data."""
+        from vtkmodules.vtkIOXML import vtkXMLPolyDataReader
+        
+        # Read VTK data from string
+        reader = vtkXMLPolyDataReader()
+        reader.SetReadFromInputString(True)
+        reader.SetInputString(state['mesh_data'])
+        reader.Update()
+        
+        self._data = reader.GetOutput()

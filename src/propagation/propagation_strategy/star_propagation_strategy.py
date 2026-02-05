@@ -23,6 +23,7 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
         futures = {}
         for target_tp in target_tps:
             logger.info(f"Submitting registration: reference tp {ref_tp} to target tp {target_tp}")
+            logger.debug(f"tp_input_data[{ref_tp}].segmentation_mesh: {tp_input_data[ref_tp].segmentation_mesh is not None}")
             
             future = registration_manager.submit(
                 REGISTRATION_METHODS.RUN_REGISTRATION_AND_RESLICE,
@@ -44,6 +45,7 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
             try:
                 result = future.result()  # TPData object
                 logger.info(f"Completed registration for target tp {target_tp}")
+                logger.debug(f"Result for tp {target_tp}: resliced_image={result.resliced_image is not None}, resliced_segmentation_mesh={result.resliced_segmentation_mesh is not None}")
                 results[target_tp] = result
             except Exception as e:
                 logger.error(f"Registration failed for tp {target_tp}: {e}")

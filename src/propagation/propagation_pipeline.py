@@ -69,6 +69,9 @@ class PropagationPipeline:
         mask_low_res = tp_data[tp_ref].mask_low_res
         if mask_low_res is not None:
             tp_input_data[tp_ref].resliced_image = mask_low_res.deepcopy()
+        seg_mesh = tp_data[tp_ref].segmentation_mesh
+        if seg_mesh is not None:
+            tp_input_data[tp_ref].segmentation_mesh = seg_mesh.deepcopy()
         
         # Initialize variables
         propagated_data_lr = None

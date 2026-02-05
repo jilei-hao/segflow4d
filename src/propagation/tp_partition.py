@@ -54,7 +54,7 @@ class TPPartition:
             async_writer.submit_image(tp_data_dict[self._input.tp_ref].mask_low_res, os.path.join(self._options.debug_output_directory, f"mask-ref-lr_tp-{self._input.tp_ref:03d}.nii.gz"))
             async_writer.submit_image(tp_data_dict[self._input.tp_ref].mask_high_res, os.path.join(self._options.debug_output_directory, f"mask-ref-hr_tp-{self._input.tp_ref:03d}.nii.gz"))
 
-        tp_data_dict[self._input.tp_ref].segmentation_mesh = None  # Could be set if needed
+        tp_data_dict[self._input.tp_ref].segmentation_mesh = self._input.seg_mesh_ref
         tp_data_dict[self._input.tp_ref].additional_meshes = self._input.additional_meshes_ref
 
         return tp_data_dict

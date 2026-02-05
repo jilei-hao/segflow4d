@@ -35,9 +35,11 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
             if prev_future is not None and prev_tp is not None:
                 result = prev_future.result()  # TPData object
                 logger.info(f"Completed registration for tp {prev_tp}")
+                logger.debug(f"Result for tp {prev_tp}: resliced_image={result.resliced_image is not None}, resliced_segmentation_mesh={result.resliced_segmentation_mesh is not None}")
                 tp_input_data[prev_tp].resliced_image = result.resliced_image
                 tp_input_data[prev_tp].segmentation_mesh = result.resliced_segmentation_mesh
             logger.info(f"-- Warping from time point {src_tp} to {tp} --")
+            logger.debug(f"tp_input_data[{src_tp}].segmentation_mesh: {tp_input_data[src_tp].segmentation_mesh is not None}")
             
             # Submit next job immediately (don't wait)
             future = registration_manager.submit(
@@ -58,7 +60,9 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
         if prev_future is not None and prev_tp is not None:
             result = prev_future.result()  # TPData object
             logger.info(f"Completed registration for tp {prev_tp}")
+            logger.debug(f"Result for tp {prev_tp}: resliced_image={result.resliced_image is not None}, resliced_segmentation_mesh={result.resliced_segmentation_mesh is not None}")
             tp_input_data[prev_tp].resliced_image = result.resliced_image
+            tp_input_data[prev_tp].segmentation_mesh = result.resliced_segmentation_mesh
             tp_input_data[prev_tp].warp_image = result.warp_image
         
         return tp_input_data
