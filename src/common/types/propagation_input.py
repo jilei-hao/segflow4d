@@ -67,7 +67,6 @@ class PropagationInputFactory:
         tp_input_group = TPPartitionInput(
             seg_ref=ImageWrapper(ReadImage(seg_ref_path)),
             additional_meshes_ref=_additional_meshes_ref,
-            seg_ref_mesh=
             tp_ref=tp_ref,
             tp_target=tp_target
         )
