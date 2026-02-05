@@ -1,6 +1,6 @@
 from common.types.propagation_options import PropagationOptions
 from propagation.propagation_strategy.abstract_propagation_strategy import AbstractPropagationStrategy
-from common.types.propagation_strategy_data import PropagationStrategyData
+from common.types.tp_data import TPData
 from registration.registration_manager import RegistrationManager
 from common.types.registration_methods import REGISTRATION_METHODS
 from common.types.propagation_strategy_name import PropagationStrategyName
@@ -9,7 +9,7 @@ from logging import getLogger
 logger = getLogger(__name__)
 
 class StarPropagationStrategy(AbstractPropagationStrategy):
-    def propagate(self, tp_input_data: dict[int, PropagationStrategyData], options: PropagationOptions) -> dict[int, PropagationStrategyData]:
+    def propagate(self, tp_input_data: dict[int, TPData], options: PropagationOptions) -> dict[int, TPData]:
         """Propagate using star pattern - submit all jobs in parallel."""
         registration_manager = RegistrationManager.get_instance()
         
@@ -42,7 +42,7 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
         results = {}
         for target_tp, future in futures.items():
             try:
-                result = future.result()  # Now we wait
+                result = future.result()  # TPData object
                 logger.info(f"Completed registration for target tp {target_tp}")
                 results[target_tp] = result
             except Exception as e:
@@ -51,8 +51,9 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
         
         # Process results
         for target_tp, result in results.items():
-            tp_input_data[target_tp].resliced_image = result['resliced_image']
-            tp_input_data[target_tp].segmentation_mesh = result['resliced_segmentation_mesh']
+            tp_input_data[target_tp].resliced_image = result.resliced_image
+            tp_input_data[target_tp].segmentation_mesh = result.resliced_segmentation_mesh
+            tp_input_data[target_tp].warp_image = result.warp_image
     
         return tp_input_data
 

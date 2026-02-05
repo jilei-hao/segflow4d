@@ -1,6 +1,6 @@
 from common.types.propagation_options import PropagationOptions
 from propagation.propagation_strategy.abstract_propagation_strategy import AbstractPropagationStrategy
-from common.types.propagation_strategy_data import PropagationStrategyData
+from common.types.tp_data import TPData
 from registration.registration_manager import RegistrationManager
 from common.types.registration_methods import REGISTRATION_METHODS
 from common.types.propagation_strategy_name import PropagationStrategyName
@@ -9,7 +9,7 @@ from logging import getLogger
 logger = getLogger(__name__)
 
 class SequentialPropagationStrategy(AbstractPropagationStrategy):
-    def propagate(self, tp_input_data: dict[int, PropagationStrategyData], options: PropagationOptions) -> dict[int, PropagationStrategyData]:
+    def propagate(self, tp_input_data: dict[int, TPData], options: PropagationOptions) -> dict[int, TPData]:
         """
         Propagate sequentially but batch jobs where possible.
         
@@ -33,10 +33,10 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
             
             # Wait for previous result if exists (needed for true sequential dependency)
             if prev_future is not None and prev_tp is not None:
-                result = prev_future.result()
+                result = prev_future.result()  # TPData object
                 logger.info(f"Completed registration for tp {prev_tp}")
-                tp_input_data[prev_tp].resliced_image = result['resliced_image']
-                tp_input_data[prev_tp].segmentation_mesh = result['resliced_segmentation_mesh']
+                tp_input_data[prev_tp].resliced_image = result.resliced_image
+                tp_input_data[prev_tp].segmentation_mesh = result.resliced_segmentation_mesh
             logger.info(f"-- Warping from time point {src_tp} to {tp} --")
             
             # Submit next job immediately (don't wait)
@@ -56,9 +56,10 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
         
         # Wait for final result
         if prev_future is not None and prev_tp is not None:
-            result = prev_future.result()
+            result = prev_future.result()  # TPData object
             logger.info(f"Completed registration for tp {prev_tp}")
-            tp_input_data[prev_tp].resliced_image = result['resliced_image']
+            tp_input_data[prev_tp].resliced_image = result.resliced_image
+            tp_input_data[prev_tp].warp_image = result.warp_image
         
         return tp_input_data
 

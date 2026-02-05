@@ -13,13 +13,15 @@ class PropagationStrategyData:
         mask: Optional[ImageWrapper] = None,
         resliced_image: Optional[ImageWrapper] = None,
         resliced_meshes: Optional[dict[str, MeshWrapper]] = None,
-        segmentation_mesh: Optional[MeshWrapper] = None
+        segmentation_mesh: Optional[MeshWrapper] = None,
+        warp_image: Optional[ImageWrapper] = None
     ):
         self.image = image
         self.mask = mask
         self.resliced_image = resliced_image
         self.resliced_meshes = resliced_meshes
         self.segmentation_mesh = segmentation_mesh
+        self.warp_image = warp_image
     
     def deepcopy(self) -> 'PropagationStrategyData':
         """Create a deep copy of PropagationStrategyData with independent image and mesh data."""
@@ -49,7 +51,8 @@ class PropagationStrategyData:
             mask=_deepcopy_image(self.mask),
             resliced_image=_deepcopy_image(self.resliced_image),
             resliced_meshes=resliced_meshes_copy,
-            segmentation_mesh=_deepcopy_mesh(self.segmentation_mesh)
+            segmentation_mesh=_deepcopy_mesh(self.segmentation_mesh),
+            warp_image=_deepcopy_image(self.warp_image)
         )
     
     def clear(self):
@@ -59,3 +62,4 @@ class PropagationStrategyData:
         self.resliced_image = None
         self.resliced_meshes = None
         self.segmentation_mesh = None
+        self.warp_image = None

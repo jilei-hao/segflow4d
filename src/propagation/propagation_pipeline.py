@@ -6,7 +6,6 @@ import threading
 from common.types.image_wrapper import ImageWrapper
 from common.types.propagation_input import PropagationInput
 from common.types.propagation_options import PropagationOptions
-from common.types.propagation_strategy_data import PropagationStrategyData
 from common.types.propagation_strategy_name import PropagationStrategyName
 from common.types.tp_data import TPData
 from propagation.tp_partition_input import TPPartitionInput
@@ -59,10 +58,10 @@ class PropagationPipeline:
 
         # prepare input data for propagation strategy
         # IMPORTANT: Deep copy ImageWrapper to ensure thread isolation
-        tp_input_data = dict[int, PropagationStrategyData]()
+        tp_input_data = dict[int, TPData]()
         for tp in tp_list:
             crnt_tp_data = tp_data[tp]
-            tp_input_data[tp] = PropagationStrategyData(
+            tp_input_data[tp] = TPData(
                 image=crnt_tp_data.image_low_res.deepcopy() if crnt_tp_data.image_low_res else None
             )
 
@@ -120,10 +119,10 @@ class PropagationPipeline:
 
             # prepare input data for high res propagation
             # IMPORTANT: Deep copy ImageWrapper to ensure thread isolation
-            tp_input_data_hr = dict[int, PropagationStrategyData]()
+            tp_input_data_hr = dict[int, TPData]()
             for tp in tp_list:
                 crnt_tp_data = tp_data[tp]
-                tp_input_data_hr[tp] = PropagationStrategyData(
+                tp_input_data_hr[tp] = TPData(
                     image=crnt_tp_data.image.deepcopy() if crnt_tp_data.image else None,
                     mask=crnt_tp_data.mask_high_res.deepcopy() if crnt_tp_data.mask_high_res else None
                 )

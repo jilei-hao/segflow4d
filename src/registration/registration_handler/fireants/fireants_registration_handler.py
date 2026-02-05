@@ -1,5 +1,7 @@
 from common.types.image_wrapper import ImageWrapper
+from common.types.mesh_wrapper import MeshWrapper
 from common.types.propagation_options import PropagationOptions
+from common.types.tp_data import TPData
 from registration.registration_handler.fireants.fireants_registration_options import FireantsRegistrationOptions
 from registration import AbstractRegistrationHandler
 import logging
@@ -75,7 +77,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         return ImageWrapper(warp_image)
 
 
-    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options, mask_fixed=None, mask_moving=None) -> dict:
+    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, mask_fixed=None, mask_moving=None) -> TPData:
         """
         Perform affine + deformable registration and reslice images/segmentations.
         
@@ -317,7 +319,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             resliced_itk.SetDirection(reslice_meta['direction'])
             
             # Mesh reslicing to be implemented
-            resliced_meshes = []
+            resliced_meshes = dict[str, MeshWrapper]()
             if mesh_to_reslice is not None:
                 logger.warning("Mesh reslicing not yet implemented")
 
@@ -326,12 +328,13 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             
             logger.info("Registration and reslicing completed successfully")
             
-            return {
-                'affine_matrix': affine_matrix.numpy().copy(),
-                'resliced_image': ImageWrapper(resliced_itk),
-                'resliced_segmentation_mesh': resliced_seg_mesh,
-                'resliced_meshes': resliced_meshes
-            }
+            return TPData(
+                affine_matrix=affine_matrix.numpy().copy(),
+                resliced_image=ImageWrapper(resliced_itk),
+                resliced_segmentation_mesh=resliced_seg_mesh,
+                resliced_meshes=resliced_meshes,
+                warp_image=warp_image
+            )
         
         except Exception as e:
             logger.error(f"Registration failed on cuda:{device_id}: {e}", exc_info=True)

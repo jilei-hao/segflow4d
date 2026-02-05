@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from common.types.propagation_options import PropagationOptions
+from common.types.tp_data import TPData
 
 class AbstractRegistrationHandler(ABC):
     @abstractmethod
@@ -22,7 +23,7 @@ class AbstractRegistrationHandler(ABC):
 
 
     @abstractmethod
-    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, mask_fixed = None, mask_moving = None) -> dict:
+    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, mask_fixed = None, mask_moving = None) -> TPData:
         pass
 
 
