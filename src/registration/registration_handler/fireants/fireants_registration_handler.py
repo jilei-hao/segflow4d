@@ -88,7 +88,6 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         device_id = torch.cuda.current_device()
         device_str = f"cuda:{device_id}"
         logger.info(f"Running registration on device: {device_str}")
-        logger.info(f"Received mesh_to_reslice: {mesh_to_reslice is not None}, type: {type(mesh_to_reslice)}")
         
         # Ensure all operations happen on this device
         torch.cuda.set_device(device_id)
@@ -279,9 +278,6 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                     )
                     warped_vertices_np = warped_vertices.cpu().detach().numpy()
                     resliced_seg_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
-                    logger.info(f"Mesh reslicing completed: {resliced_seg_mesh is not None}")
-                else:
-                    logger.debug("No mesh to reslice provided (mesh_to_reslice is None)")
             
             # Clean up deformable stage
             logger.debug("Deleting deformable stage objects...")
@@ -322,10 +318,14 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             resliced_itk.SetOrigin(reslice_meta['origin'])
             resliced_itk.SetDirection(reslice_meta['direction'])
             
-            # Mesh reslicing completed above (lines 268-280)
+            # Mesh reslicing to be implemented
             resliced_meshes = dict[str, MeshWrapper]()
+            if mesh_to_reslice is not None:
+                logger.warning("Mesh reslicing not yet implemented")
+
+            # if resliced_seg_mesh is None:
+            #     raise RuntimeError("Resliced segmentation mesh is None after reslicing")
             
-            logger.debug(f"Returning resliced_seg_mesh: {resliced_seg_mesh is not None}")
             logger.info("Registration and reslicing completed successfully")
             
             return TPData(
