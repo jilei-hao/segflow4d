@@ -61,6 +61,7 @@ def parse_arguments():
     parser.add_argument('--lowres-factor', type=float, default=0.5, help='Low resolution resample factor')
     parser.add_argument('--dilation-radius', type=int, default=2, help='Dilation radius for segmentation')
     parser.add_argument('--registration-backend', type=str, default='fireants', help='Registration backend to use')
+    parser.add_argument('--min-vram', type=int, default=10, help='Minimum required VRAM in GB')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--debug-dir', type=str, default='', help='Directory to store debug outputs')
 
@@ -105,7 +106,8 @@ def main():
             write_result_to_disk=True,
             output_directory=config.get('output'),
             debug=config.get('debug', False),
-            debug_output_directory=config.get('debug_dir', '')
+            debug_output_directory=config.get('debug_dir', ''),
+            minimum_required_vram_gb=config.get('minimum_required_vram_gb', 0)
         )
         
         # Parse and add multiple tp_input_groups
@@ -144,6 +146,7 @@ def main():
             lowres_factor=args.lowres_factor,
             registration_backend=args.registration_backend,
             dilation_radius=args.dilation_radius,
+            minimum_required_vram_gb=args.min_vram,
             write_result_to_disk=True,
             output_directory=args.output,
             debug=args.debug,

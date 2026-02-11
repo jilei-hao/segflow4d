@@ -113,6 +113,9 @@ class ThreadJobDispatcher:
                         logger.info(f"Device {device_id} acquired - Free: {mem_info['free_mb']:.0f}MB, "
                                    f"Required: {required_vram_mb}MB")
                         return device_id
+                    else:
+                        logger.info(f"Device {device_id} insufficient VRAM - Free: {mem_info['free_mb']:.0f}MB, "
+                                     f"Required: {required_vram_mb}MB")
         return None
     
     def _release_device(self, device_id: int):
@@ -442,7 +445,7 @@ class ProcessJobDispatcher:
                             mem = dev_status['memory']
                             if mem:
                                 logger.debug(f"GPU {dev_id} [{busy_str}]: Free: {mem['free_mb']:.0f}MB, "
-                                           f"Usage: {mem['usage_percent']:.1f}%")
+                                           f"Usage: {mem['usage_percent']:.1f}%, required: {self._required_vram_mb}MB")
                         
                         logger.debug(f"No device available. {len(undispatched)} jobs pending. "
                                    f"Waiting {self._vram_check_interval}s...")

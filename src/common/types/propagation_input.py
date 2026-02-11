@@ -76,7 +76,8 @@ class PropagationInputFactory:
 
     def set_options(self, lowres_factor: float, registration_backend: str, dilation_radius: int,
                     write_result_to_disk: bool = False, output_directory: str = "",
-                    debug: bool = False, debug_output_directory: str = "", **kwargs) -> 'PropagationInputFactory':
+                    debug: bool = False, debug_output_directory: str = "",
+                    minimum_required_vram_gb: int = 10, **kwargs) -> 'PropagationInputFactory':
         '''
         Sets the propagation options. *kwargs are reserved for configuring different registration backends.
         '''
@@ -89,6 +90,7 @@ class PropagationInputFactory:
             output_directory=output_directory,
             debug=debug,
             debug_output_directory=debug_output_directory,
+            minimum_required_vram_gb=minimum_required_vram_gb,
             registration_backend_options=kwargs
         )
         return self
