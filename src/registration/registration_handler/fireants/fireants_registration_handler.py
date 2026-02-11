@@ -262,8 +262,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
 
                 # Get Warp Image
-                warp_field = deformable_reg.get_warped_coordinates(batch_fixed_def, batch_moving_def, None)
-                warp_image = self._get_warp_image_from_tensor(warp_field, img_fixed)
+                mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
+                mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
 
                 # Reslice mesh
                 if mesh_to_reslice is not None:
@@ -272,7 +272,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                     mesh_vertices_tensor = torch.from_numpy(mesh_vertices).to(device_str, dtype=torch.float32)
                     warped_vertices = warp_mesh_vertices(
                         mesh_vertices_tensor,
-                        warp_field,
+                        mesh_warp_field,
                         img_fixed,
                         img_moving
                     )
@@ -333,7 +333,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 resliced_image=ImageWrapper(resliced_itk),
                 resliced_segmentation_mesh=resliced_seg_mesh,
                 resliced_meshes=resliced_meshes,
-                warp_image=warp_image
+                warp_image=mesh_warp_image
             )
         
         except Exception as e:
