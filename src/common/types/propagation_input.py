@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 from common.types.image_wrapper import ImageWrapper
 from common.types.mesh_wrapper import MeshWrapper
 from common.types.tp_image_group import TPImageGroup
@@ -93,6 +94,10 @@ class PropagationInputFactory:
             minimum_required_vram_gb=minimum_required_vram_gb,
             registration_backend_options=kwargs
         )
+
+        os.makedirs(output_directory, exist_ok=True)
+        if debug:
+            os.makedirs(debug_output_directory, exist_ok=True)
         return self
     
 
