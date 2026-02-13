@@ -30,6 +30,7 @@ mesh-gen = "processing.cli.ml_seg_mesh_gen:main"
 test_registration_manager = "registration.tests.test_registration_manager:main"
 gpu-mesh-warper = "registration.registration_handler.fireants.gpu_mesh_warper:main"
 segmentation-validation = "utility.validation.segmentation_validation:main"
+batch-segmentation-validation = "utility.validation.batch_validation:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
