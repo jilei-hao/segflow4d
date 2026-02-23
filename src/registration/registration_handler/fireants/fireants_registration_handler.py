@@ -234,9 +234,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 batch_fixed_def = BatchedImages(fa_image_fixed_def)
                 batch_moving_def = BatchedImages(fa_image_moving_def)
 
-                fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=False, device=device_str)
+                # Use generic label interpolation for segmentation reslicing
+                fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=True, is_onehot=False, background_seg_label=0, device=device_str)
                 batch_to_reslice = BatchedImages([fa_image_to_reslice])
-                batch_to_reslice.interpolate_mode = 'nearest'
+                
                 
                 affine_matrix_gpu = affine_matrix.to(device_str)
                 

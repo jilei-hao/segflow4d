@@ -20,9 +20,9 @@ class FireantsRegistrationOptions(AbstractRegistrationOptions):
         smooth_warp_sigma: Gaussian smoothing sigma for warp field regularization
     """
     
-    scales: List[int] = field(default_factory=lambda: [4, 2, 1])
+    scales: List[float] = field(default_factory=lambda: [4, 2, 1])
     affine_iterations: List[int] = field(default_factory=lambda: [200, 100, 50])
-    deformable_iterations: List[float] = field(default_factory=lambda: [200, 100, 25])
+    deformable_iterations: List[int] = field(default_factory=lambda: [200, 100, 25])
     affine_lr: float = 3e-3
     deformable_lr: float = 0.5
     loss_type: Literal['mse', 'cc'] = 'mse'
