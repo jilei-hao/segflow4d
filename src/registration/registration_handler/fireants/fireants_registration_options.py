@@ -16,8 +16,8 @@ class FireantsRegistrationOptions(AbstractRegistrationOptions):
         loss_type: Similarity metric to use ('mse' or 'cc' for cross-correlation)
         cc_kernel_size: Kernel size for cross-correlation loss (only used if loss_type='cc')
         deformation_type: Type of deformation model ('compositive' or 'additive')
-        smooth_grad_sigma: Gaussian smoothing sigma for gradients during optimization
-        smooth_warp_sigma: Gaussian smoothing sigma for warp field regularization
+        smooth_grad_sigma_mm: Gaussian smoothing sigma for gradients during optimization (in millimeters)
+        smooth_warp_sigma_mm: Gaussian smoothing sigma for warp field regularization (in millimeters)
     """
     
     scales: List[float] = field(default_factory=lambda: [4, 2, 1])
@@ -28,8 +28,8 @@ class FireantsRegistrationOptions(AbstractRegistrationOptions):
     loss_type: Literal['mse', 'cc'] = 'mse'
     cc_kernel_size: int = 3
     deformation_type: Literal['compositive', 'additive'] = 'compositive'
-    smooth_grad_sigma: float = 3.0
-    smooth_warp_sigma: float = 1.5
+    smooth_grad_sigma_mm: float = 3.0
+    smooth_warp_sigma_mm: float = 1.5
     
     def __post_init__(self):
         """Validate registration options after initialization."""
@@ -57,8 +57,8 @@ class FireantsRegistrationOptions(AbstractRegistrationOptions):
         if self.deformation_type not in ['compositive', 'additive']:
             raise ValueError(f"deformation_type must be 'compositive' or 'additive', got '{self.deformation_type}'")
         
-        if self.smooth_grad_sigma < 0:
-            raise ValueError("smooth_grad_sigma must be non-negative")
+        if self.smooth_grad_sigma_mm < 0:
+            raise ValueError("smooth_grad_sigma_mm must be non-negative")
         
-        if self.smooth_warp_sigma < 0:
-            raise ValueError("smooth_warp_sigma must be non-negative")
+        if self.smooth_warp_sigma_mm < 0:
+            raise ValueError("smooth_warp_sigma_mm must be non-negative")
