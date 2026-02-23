@@ -100,14 +100,18 @@ class PropagationPipeline:
                 
                 if options.debug:
                     if resliced_mask is not None:
+                        dir_debug_mask_lr = os.path.join(options.debug_output_directory, "mask-lr")
+                        os.makedirs(dir_debug_mask_lr, exist_ok=True)
                         async_writer.submit_image(
                             resliced_mask,
-                            os.path.join(options.debug_output_directory, f"mask-lr_tp-{tp:03d}.nii.gz")
+                            os.path.join(dir_debug_mask_lr, f"mask-lr_tp-{tp:03d}.nii.gz")
                         )
                     if high_res_mask is not None:
+                        dir_debug_mask_hr = os.path.join(options.debug_output_directory, "mask-hr")
+                        os.makedirs(dir_debug_mask_hr, exist_ok=True)
                         async_writer.submit_image(
                             high_res_mask,
-                            os.path.join(options.debug_output_directory, f"mask-hr_tp-{tp:03d}.nii.gz")
+                            os.path.join(dir_debug_mask_hr, f"mask-hr_tp-{tp:03d}.nii.gz")
                         )
 
             logger.debug(f"[Thread {thread_id}] Low-res propagation completed")
@@ -139,6 +143,9 @@ class PropagationPipeline:
             
             # update propagated results back to tp_partition
             if options.debug:
+                dir_debug_seg_hr = os.path.join(options.debug_output_directory, "seg-hr")
+                os.makedirs(dir_debug_seg_hr, exist_ok=True)
+
                 for tp in tp_list:
                     resliced_seg = propagated_data_hr[tp].resliced_image
                     if resliced_seg is None:
@@ -150,7 +157,7 @@ class PropagationPipeline:
 
                     async_writer.submit_image(
                         resliced_seg,
-                        os.path.join(options.debug_output_directory, f"seg-hr_tp-{tp:03d}.nii.gz")
+                        os.path.join(dir_debug_seg_hr, f"seg-hr_tp-{tp:03d}.nii.gz")
                     )
 
 

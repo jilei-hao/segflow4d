@@ -118,9 +118,16 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         loss_type = backend_options.loss_type
         cc_kernel_size = backend_options.cc_kernel_size
         deformation_type = backend_options.deformation_type
-        smooth_grad_sigma = backend_options.smooth_grad_sigma
-        smooth_warp_sigma = backend_options.smooth_warp_sigma
-        
+        smooth_grad_sigma_vox = backend_options.smooth_grad_sigma
+        smooth_warp_sigma_vox = backend_options.smooth_warp_sigma
+
+        # find the smallest spacing among fixed image
+        min_fixed_spacing = min(img_fixed.get_data().GetSpacing())
+
+        # convert vox sigma to mm by using the min_fixed_spacing
+        smooth_grad_sigma_mm = min_fixed_spacing * smooth_grad_sigma_vox
+        smooth_warp_sigma_mm = min_fixed_spacing * smooth_warp_sigma_vox
+
         try:
             # Get ITK images directly
             logger.debug("Converting images to FireANTs format...")
@@ -239,8 +246,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                     fixed_images=batch_fixed_def,
                     moving_images=batch_moving_def,
                     deformation_type=deformation_type,
-                    smooth_grad_sigma=smooth_grad_sigma,
-                    smooth_warp_sigma=smooth_warp_sigma,
+                    smooth_grad_sigma=smooth_grad_sigma_mm,
+                    smooth_warp_sigma=smooth_warp_sigma_mm,
                     loss_type=loss_type,
                     optimizer='adam',
                     optimizer_lr=deformable_lr,

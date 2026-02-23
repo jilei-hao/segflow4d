@@ -40,8 +40,10 @@ class TPPartition:
             tp_data_dict[tp] = TPData(image=tp_image, image_low_res=tp_image_low_res)
 
             if self._options.debug:
-                async_writer.submit_image(tp_image, os.path.join(self._options.debug_output_directory, f"img_tp-{tp:03d}.nii.gz"))
-                async_writer.submit_image(tp_image_low_res, os.path.join(self._options.debug_output_directory, f"img-lr_tp-{tp:03d}.nii.gz"))
+                dir_debug_img = os.path.join(self._options.debug_output_directory, "img")
+                os.makedirs(dir_debug_img, exist_ok=True)
+                async_writer.submit_image(tp_image, os.path.join(dir_debug_img, f"img_tp-{tp:03d}.nii.gz"))
+                async_writer.submit_image(tp_image_low_res, os.path.join(dir_debug_img, f"img-lr_tp-{tp:03d}.nii.gz"))
 
         tp_data_dict[self._input.tp_ref].segmentation = self._input.seg_ref
 
