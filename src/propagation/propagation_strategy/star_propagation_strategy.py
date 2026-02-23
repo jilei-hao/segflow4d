@@ -31,7 +31,7 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
                 img_moving=tp_input_data[ref_tp].image,
                 img_to_reslice=tp_input_data[ref_tp].resliced_image,
                 mesh_to_reslice=tp_input_data[ref_tp].segmentation_mesh,
-                options=options.registration_backend_options,
+                options=options,
                 mask_fixed=tp_input_data[target_tp].mask,
                 mask_moving=tp_input_data[ref_tp].mask
             )

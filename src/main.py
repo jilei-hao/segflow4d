@@ -64,6 +64,8 @@ def parse_arguments():
     parser.add_argument('--min-vram', type=int, default=10, help='Minimum required VRAM in GB')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--debug-dir', type=str, default='', help='Directory to store debug outputs')
+    parser.add_argument('--smooth-grad-sigma-mm', type=float, default=3.0, help='Gaussian smoothing sigma for gradient field in mm (default: 3.0)')
+    parser.add_argument('--smooth-warp-sigma-mm', type=float, default=1.5, help='Gaussian smoothing sigma for warp field in mm (default: 1.5)')
 
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
@@ -99,6 +101,7 @@ def main():
         input_factory.set_image_4d_from_disk(config.get('image4d'))
         
         # Set global options
+        backend_options = config.get('registration_backend_options', {})
         input_factory.set_options(
             lowres_factor=config.get('lowres_factor', 0.5),
             registration_backend=config.get('registration_backend', 'fireants'),
@@ -107,7 +110,8 @@ def main():
             output_directory=config.get('output'),
             debug=config.get('debug', False),
             debug_output_directory=config.get('debug_dir', ''),
-            minimum_required_vram_gb=config.get('minimum_required_vram_gb', 0)
+            minimum_required_vram_gb=config.get('minimum_required_vram_gb', 0),
+            **backend_options
         )
         
         # Parse and add multiple tp_input_groups
@@ -150,7 +154,9 @@ def main():
             write_result_to_disk=True,
             output_directory=args.output,
             debug=args.debug,
-            debug_output_directory=args.debug_dir
+            debug_output_directory=args.debug_dir,
+            smooth_grad_sigma_mm=args.smooth_grad_sigma_mm,
+            smooth_warp_sigma_mm=args.smooth_warp_sigma_mm
         )
 
     propagation_input = input_factory.build()

@@ -383,7 +383,8 @@ class ProcessJobDispatcher:
             'method_name': method_name,
             'args': job['args'],
             'kwargs': job['kwargs'],
-            'registration_backend': self._registration_backend
+            'registration_backend': self._registration_backend,
+            'log_level': logging.getLogger().level or logging.DEBUG
         }
         
         logger.info(f"Dispatching job '{method_name}' to GPU {device_id} (process)")

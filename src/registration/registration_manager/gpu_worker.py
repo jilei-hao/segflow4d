@@ -58,7 +58,15 @@ def run_registration_job(job_data: Dict) -> Any:
     import gc
     import logging
     from registration.registration_handler import RegistrationHandlerFactory
-    
+
+    # Configure logging in this subprocess - not inherited from parent process
+    log_level = job_data.get('log_level', logging.DEBUG)
+    logging.basicConfig(
+        level=log_level,
+        format='[%(asctime)s - %(name)s - %(levelname)s] - %(message)s',
+        force=True
+    )
+
     logger = logging.getLogger(__name__)
     
     device_id = job_data['device_id']

@@ -40,7 +40,7 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
                 img_moving=tp_input_data[src_tp].image,
                 img_to_reslice=tp_input_data[src_tp].resliced_image,
                 mesh_to_reslice=tp_input_data[src_tp].segmentation_mesh,
-                options=options.registration_backend_options,
+                options=options,
                 mask_fixed=tp_input_data[tgt_tp].mask,
                 mask_moving=tp_input_data[src_tp].mask
             )

@@ -214,6 +214,11 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             min_fixed_spacing = min(img_fixed.get_data().GetSpacing())
             smooth_grad_sigma_vox = backend_options.smooth_grad_sigma_mm / min_fixed_spacing
             smooth_warp_sigma_vox = backend_options.smooth_warp_sigma_mm / min_fixed_spacing
+
+            logger.debug(f"smooth_grad_sigma_mm: {backend_options.smooth_grad_sigma_mm} mm, smooth_warp_sigma_mm: {backend_options.smooth_warp_sigma_mm} mm")
+            logger.debug(f"Converted smooth_grad_sigma: {smooth_grad_sigma_vox} vox, "
+                         f"smooth_warp_sigma: {smooth_warp_sigma_vox} vox "
+                         f"using min_fixed_spacing: {min_fixed_spacing} mm")
             
             with torch.cuda.device(device_id):
                 # Recreate batch images for deformable stage to ensure device consistency

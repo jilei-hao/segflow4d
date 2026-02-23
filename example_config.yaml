@@ -4,6 +4,9 @@ log_level: INFO
 lowres_factor: 0.5
 dilation_radius: 2
 registration_backend: fireants
+registration_backend_options:
+  smooth_grad_sigma_mm: 3.0
+  smooth_warp_sigma_mm: 1.5
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:
