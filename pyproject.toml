@@ -21,16 +21,16 @@ dependencies = [
 ]
 
 [project.scripts]
-segflow4d = "main:main"
-run-fireants = "registration.registration_handler.fireants.run_fireants:main"
-create-reference-mask = "processing.cli.create_reference_mask:main"
-create-tp-images = "processing.cli.create_tp_images:main"
-resample-to-reference = "processing.cli.resample_to_reference:main"
-mesh-gen = "processing.cli.ml_seg_mesh_gen:main"
-test_registration_manager = "registration.tests.test_registration_manager:main"
-gpu-mesh-warper = "registration.registration_handler.fireants.gpu_mesh_warper:main"
-segmentation-validation = "utility.validation.segmentation_validation:main"
-batch-segmentation-validation = "utility.validation.batch_validation:main"
+segflow4d = "segflow4d.main:main"
+run-fireants = "segflow4d.registration.registration_handler.fireants.run_fireants:main"
+create-reference-mask = "segflow4d.processing.cli.create_reference_mask:main"
+create-tp-images = "segflow4d.processing.cli.create_tp_images:main"
+resample-to-reference = "segflow4d.processing.cli.resample_to_reference:main"
+mesh-gen = "segflow4d.processing.cli.ml_seg_mesh_gen:main"
+test_registration_manager = "segflow4d.registration.tests.test_registration_manager:main"
+gpu-mesh-warper = "segflow4d.registration.registration_handler.fireants.gpu_mesh_warper:main"
+segmentation-validation = "segflow4d.utility.validation.segmentation_validation:main"
+batch-segmentation-validation = "segflow4d.utility.validation.batch_validation:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
