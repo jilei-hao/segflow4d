@@ -7,6 +7,11 @@ registration_backend: fireants
 registration_backend_options:
   smooth_grad_sigma_mm: 3.0
   smooth_warp_sigma_mm: 1.5
+  scales: [4, 2, 1]
+  affine_iterations: [200, 100, 50]
+  deformable_iterations: [200, 100, 25]
+  loss_type: mse          # 'mse' or 'cc' (cross-correlation)
+  cc_kernel_size: 3       # only used when loss_type is 'cc'
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:

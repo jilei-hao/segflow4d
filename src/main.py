@@ -66,6 +66,11 @@ def parse_arguments():
     parser.add_argument('--debug-dir', type=str, default='', help='Directory to store debug outputs')
     parser.add_argument('--smooth-grad-sigma-mm', type=float, default=3.0, help='Gaussian smoothing sigma for gradient field in mm (default: 3.0)')
     parser.add_argument('--smooth-warp-sigma-mm', type=float, default=1.5, help='Gaussian smoothing sigma for warp field in mm (default: 1.5)')
+    parser.add_argument('--scales', type=float, nargs='+', default=None, help='Multi-resolution scales for registration, coarse to fine (e.g. --scales 4 2 1)')
+    parser.add_argument('--affine-iterations', type=int, nargs='+', default=None, help='Iterations per scale for affine stage (e.g. --affine-iterations 200 100 50)')
+    parser.add_argument('--deformable-iterations', type=int, nargs='+', default=None, help='Iterations per scale for deformable stage (e.g. --deformable-iterations 200 100 25)')
+    parser.add_argument('--loss-type', type=str, default=None, choices=['mse', 'cc'], help='Similarity metric: mse or cc (cross-correlation)')
+    parser.add_argument('--cc-kernel-size', type=int, default=None, help='Kernel size for cross-correlation loss (used when --loss-type=cc)')
 
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
@@ -146,6 +151,23 @@ def main():
             seg_ref_path=args.seg_ref,
             additional_meshes_ref=args.additional_meshes
         )
+        # Collect optional backend options only when explicitly provided
+        cli_backend_options = {}
+        if args.smooth_grad_sigma_mm is not None:
+            cli_backend_options['smooth_grad_sigma_mm'] = args.smooth_grad_sigma_mm
+        if args.smooth_warp_sigma_mm is not None:
+            cli_backend_options['smooth_warp_sigma_mm'] = args.smooth_warp_sigma_mm
+        if args.scales is not None:
+            cli_backend_options['scales'] = args.scales
+        if args.affine_iterations is not None:
+            cli_backend_options['affine_iterations'] = args.affine_iterations
+        if args.deformable_iterations is not None:
+            cli_backend_options['deformable_iterations'] = args.deformable_iterations
+        if args.loss_type is not None:
+            cli_backend_options['loss_type'] = args.loss_type
+        if args.cc_kernel_size is not None:
+            cli_backend_options['cc_kernel_size'] = args.cc_kernel_size
+
         input_factory.set_options(
             lowres_factor=args.lowres_factor,
             registration_backend=args.registration_backend,
@@ -155,8 +177,7 @@ def main():
             output_directory=args.output,
             debug=args.debug,
             debug_output_directory=args.debug_dir,
-            smooth_grad_sigma_mm=args.smooth_grad_sigma_mm,
-            smooth_warp_sigma_mm=args.smooth_warp_sigma_mm
+            **cli_backend_options
         )
 
     propagation_input = input_factory.build()
