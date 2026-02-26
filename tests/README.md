@@ -2,36 +2,36 @@
 
 ## Running Tests
 
-All commands assume the `segflow4d-py310` conda environment and are run from the repo root.
+All commands are run from the repo root with the package installed in your active environment.
 
 **CPU-only (fast, no GPU required — suitable for most development)**
 ```bash
-conda run -n segflow4d-py310 pytest tests/ -m "not gpu and not requires_real_data" -v
+pytest tests/ -m "not gpu and not requires_real_data" -v
 ```
 
 **GPU tests (requires a CUDA device)**
 ```bash
-conda run -n segflow4d-py310 pytest tests/ -m "gpu" -v
+pytest tests/ -m "gpu" -v
 ```
 
 **Full suite including real-data E2E (requires GPU + fixture files)**
 ```bash
 # Generate fixtures first (one-time setup)
-conda run -n segflow4d-py310 python scripts/generate_real_fixtures.py
+python scripts/generate_real_fixtures.py
 
 # Then run
-conda run -n segflow4d-py310 pytest tests/ -v
+pytest tests/ -v
 ```
 
 **Machine-readable JSON output (for coding agents)**
 ```bash
-conda run -n segflow4d-py310 pytest tests/ -m "not gpu and not requires_real_data" \
+pytest tests/ -m "not gpu and not requires_real_data" \
   --json-report --json-report-file=test-results.json -v
 ```
 
 **Coverage report**
 ```bash
-conda run -n segflow4d-py310 pytest tests/ -m "not gpu and not requires_real_data" \
+pytest tests/ -m "not gpu and not requires_real_data" \
   --cov=src/segflow4d --cov-report=html
 ```
 

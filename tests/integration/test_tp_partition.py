@@ -34,8 +34,13 @@ def _make_options(lowres_factor=2.0, dilation_radius=2):
 
 
 def _make_4d_image(n_tp=5, shape_zyx=(16, 32, 32)):
-    """Construct a 4D SimpleITK image with `n_tp` timepoints."""
-    volumes = []
+    """Construct a 4D SimpleITK image with `n_tp` timepoints using JoinSeries.
+
+    ``sitk.GetImageFromArray`` on a raw 4-D numpy array produces a 3-D image
+    (the leading dimension is folded into Z).  Using ``sitk.JoinSeries`` on a
+    list of 3-D volumes is the correct way to build a genuine 4-D image.
+    """
+    volumes_3d = []
     for tp in range(n_tp):
         arr = np.zeros(shape_zyx, dtype=np.float32)
         # Put a small bright sphere at slightly different location per TP
@@ -43,12 +48,12 @@ def _make_4d_image(n_tp=5, shape_zyx=(16, 32, 32)):
         zz, yy, xx = np.mgrid[0:shape_zyx[0], 0:shape_zyx[1], 0:shape_zyx[2]]
         dist = np.sqrt((zz-cz)**2 + (yy-cy)**2 + (xx-cx)**2)
         arr[dist <= 4] = 1.0
-        volumes.append(arr)
+        vol = sitk.GetImageFromArray(arr)
+        vol.SetSpacing((1.0, 1.0, 1.0))
+        vol.SetOrigin((0.0, 0.0, 0.0))
+        volumes_3d.append(vol)
 
-    stack = np.stack(volumes, axis=0)  # (T, Z, Y, X)
-    img_4d = sitk.GetImageFromArray(stack)
-    img_4d.SetSpacing(tuple([1.0] * 4))
-    img_4d.SetOrigin(tuple([0.0] * 4))
+    img_4d = sitk.JoinSeries(volumes_3d)
     return ImageWrapper(img_4d)
 
 

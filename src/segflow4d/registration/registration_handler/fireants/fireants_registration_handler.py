@@ -134,7 +134,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             reslice_meta = {
                 'spacing': itk_to_reslice.GetSpacing(),
                 'origin': itk_to_reslice.GetOrigin(),
-                'direction': itk_to_reslice.GetDirection()
+                'direction': itk_to_reslice.GetDirection(),
+                'pixel_id': itk_to_reslice.GetPixelID(),
             }
             
             logger.debug(f"Fixed size: {itk_fixed.GetSize()}, Moving size: {itk_moving.GetSize()}, "
@@ -271,9 +272,16 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 # Extract data immediately and copy to CPU
                 resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
 
-                # Get Warp Image
-                mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
-                mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
+                # Compute inverse warp field only when needed for mesh reslicing.
+                # get_inverse_warped_coordinates triggers compositive_warp_inverse which runs
+                # an internal GreedyRegistration with scales [8,4,2,1]; this fails when
+                # image dimensions are too small for the FFT-based downsampling path.
+                mesh_warp_field = None
+                mesh_warp_image = None
+                if mesh_to_reslice is not None:
+                    logger.info("Computing inverse warp field for mesh reslicing...")
+                    mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
+                    mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
 
                 # Reslice mesh
                 if mesh_to_reslice is not None:
@@ -315,10 +323,26 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             else:
                 resliced_labels = resliced_tensor
             
-            # Round to nearest integer and cast to appropriate type
-            # Nearest neighbor interpolation should preserve values, but floating point
-            # precision may introduce small errors
-            resliced_labels = np.round(resliced_labels).astype(np.uint8)
+            # Round to nearest integer and cast to the same pixel type as the
+            # source image-to-reslice so downstream JoinSeries calls don't fail
+            # on pixel-type mismatches.
+            source_pixel_id = reslice_meta.get('pixel_id')
+            if source_pixel_id is not None:
+                # Map SimpleITK pixel ID to numpy dtype
+                _pixel_id_to_dtype = {
+                    sitk.sitkInt8: np.int8,
+                    sitk.sitkUInt8: np.uint8,
+                    sitk.sitkInt16: np.int16,
+                    sitk.sitkUInt16: np.uint16,
+                    sitk.sitkInt32: np.int32,
+                    sitk.sitkUInt32: np.uint32,
+                    sitk.sitkFloat32: np.float32,
+                    sitk.sitkFloat64: np.float64,
+                }
+                target_dtype = _pixel_id_to_dtype.get(source_pixel_id, np.int16)
+            else:
+                target_dtype = np.int16
+            resliced_labels = np.round(resliced_labels).astype(target_dtype)
             
             logger.debug(f"Resliced labels shape: {resliced_labels.shape}, "
                         f"unique values: {np.unique(resliced_labels)}")

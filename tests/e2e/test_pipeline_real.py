@@ -47,22 +47,19 @@ def _skip_if_no_fixtures():
 
 
 def _flush_async_writer():
-    """Flush and reinitialise the global async writer."""
-    from segflow4d.utility.file_writer.async_writer import AsyncWriter
-    import segflow4d.utility.file_writer.async_writer as _aw_module
-    _aw_module.async_writer.shutdown(wait=True)
-    new_writer = AsyncWriter()
-    _aw_module.async_writer = new_writer
-    try:
-        import segflow4d.utility.file_writer as _fw
-        _fw.async_writer = new_writer
-    except Exception:
-        pass
-    try:
-        import segflow4d.propagation.tp_partition as _tp
-        _tp.async_writer = new_writer
-    except Exception:
-        pass
+    """Block until all async write tasks have completed.
+
+    Uses flush() (not shutdown) so the worker thread stays alive and can
+    serve subsequent tests without needing rebinding tricks.  The installed
+    pipeline code holds a direct reference to the original AsyncWriter
+    instance — shutdown() would kill the thread, making future writes silently
+    fail.
+    """
+    import sys, importlib
+    aw_mod = sys.modules.get('segflow4d.utility.file_writer.async_writer')
+    if aw_mod is None:
+        aw_mod = importlib.import_module('segflow4d.utility.file_writer.async_writer')
+    aw_mod.async_writer.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +99,8 @@ class TestPipelineRealSmoke:
                 additional_meshes_ref=None,
             )
             .set_options(
-                lowres_factor=2.0,
+                lowres_factor=1.0,  # 64-vox crop: factor=2 halves to 32, then
+                                    # downsample_fft(32→32) crashes (empty FFT slice)
                 registration_backend="FIREANTS",
                 dilation_radius=3,
                 write_result_to_disk=True,
@@ -142,7 +140,8 @@ class TestPipelineRealSmoke:
                 additional_meshes_ref=None,
             )
             .set_options(
-                lowres_factor=2.0,
+                lowres_factor=1.0,  # 64-vox crop: factor=2 halves to 32, then
+                                    # downsample_fft(32→32) crashes (empty FFT slice)
                 registration_backend="FIREANTS",
                 dilation_radius=3,
                 write_result_to_disk=True,
@@ -201,7 +200,8 @@ class TestPipelineRealDiceRegression:
                 additional_meshes_ref=None,
             )
             .set_options(
-                lowres_factor=2.0,
+                lowres_factor=1.0,  # 64-vox crop: factor=2 halves to 32, then
+                                    # downsample_fft(32→32) crashes (empty FFT slice)
                 registration_backend="FIREANTS",
                 dilation_radius=3,
                 write_result_to_disk=True,

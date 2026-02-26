@@ -46,31 +46,45 @@ pytestmark_import = pytest.mark.skipif(
 @pytestmark_import
 class TestIdentityWarp:
     def test_identity_warp_preserves_vertices(self, synthetic_mesh):
-        """Zero-displacement warp must leave vertex positions unchanged."""
+        """Identity warp must leave vertex positions unchanged.
+
+        ``warp_grid`` stores absolute normalized coordinates in moving space
+        (not displacements).  An all-zeros grid maps every vertex to the image
+        centre.  The true identity grid must map each voxel (d, h, w) to its
+        own normalised coordinate (x, y, z).
+        """
         device = torch.device("cuda")
         shape_zyx = (16, 32, 32)
+        D, H, W = shape_zyx
         spacing = (1.0, 1.0, 1.0)
 
         fixed_img = ImageWrapper(_make_sitk_image(shape_zyx, spacing))
         moving_img = ImageWrapper(_make_sitk_image(shape_zyx, spacing))
 
-        # Identity displacement field: all zeros
-        warp = torch.zeros(1, 16, 32, 32, 3, dtype=torch.float32, device=device)
+        # Build identity warp: warp[0, d, h, w] = (x_norm, y_norm, z_norm)
+        # where x_norm = 2*w/(W-1)-1, etc.
+        xs = torch.linspace(-1, 1, W, device=device)
+        ys = torch.linspace(-1, 1, H, device=device)
+        zs = torch.linspace(-1, 1, D, device=device)
+        # grid_z[d,h,w], grid_y[d,h,w], grid_x[d,h,w]
+        grid_z, grid_y, grid_x = torch.meshgrid(zs, ys, xs, indexing="ij")
+        # warp_grid last dim is (x, y, z)
+        warp = torch.stack([grid_x, grid_y, grid_z], dim=-1).unsqueeze(0)  # [1, D, H, W, 3]
 
         vertices = synthetic_mesh.get_data().GetPoints()
         n_pts = vertices.GetNumberOfPoints()
         orig_pts = np.array([vertices.GetPoint(i) for i in range(n_pts)])
+        orig_pts_tensor = torch.tensor(orig_pts, dtype=torch.float32, device=device)
 
         warped_mesh = warp_mesh_vertices(
-            vertices=orig_pts,
+            vertices=orig_pts_tensor,
             warp_grid=warp,
             fixed_images=fixed_img,
             moving_images=moving_img,
         )
 
-        warped_pts = np.array(
-            [warped_mesh.GetPoint(i) for i in range(warped_mesh.GetNumberOfPoints())]
-        )
+        # warp_mesh_vertices returns a Tensor of shape [N_vertices, 3]
+        warped_pts = warped_mesh.cpu().numpy()
         np.testing.assert_allclose(warped_pts, orig_pts, atol=1e-4)
 
 
@@ -101,17 +115,17 @@ class TestConstantDisplacementWarp:
         vertices = synthetic_mesh.get_data().GetPoints()
         n_pts = vertices.GetNumberOfPoints()
         orig_pts = np.array([vertices.GetPoint(i) for i in range(n_pts)])
+        orig_pts_tensor = torch.tensor(orig_pts, dtype=torch.float32, device=device)
 
         warped_mesh = warp_mesh_vertices(
-            vertices=orig_pts,
+            vertices=orig_pts_tensor,
             warp_grid=shift,
             fixed_images=fixed_img,
             moving_images=moving_img,
         )
 
-        warped_pts = np.array(
-            [warped_mesh.GetPoint(i) for i in range(warped_mesh.GetNumberOfPoints())]
-        )
+        # warp_mesh_vertices returns a Tensor of shape [N_vertices, 3]
+        warped_pts = warped_mesh.cpu().numpy()
         # At least some vertices must have moved
         assert not np.allclose(warped_pts, orig_pts, atol=1e-6), (
             "Expected warped vertices to differ from original"

@@ -20,20 +20,24 @@ import SimpleITK as sitk
 
 from segflow4d.common.types.propagation_input import PropagationInputFactory
 from segflow4d.propagation.propagation_pipeline import PropagationPipeline
-import segflow4d.utility.file_writer.async_writer as _aw_module
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-SHAPE_ZYX = (16, 32, 32)
+SHAPE_ZYX = (64, 64, 64)
 N_TP = 3
 
 
 def _make_4d_image(n_tp=N_TP, shape_zyx=SHAPE_ZYX, shift_px=1):
-    """Synthetic 4D image, each TP shifted by `shift_px` voxels in X."""
-    volumes = []
+    """Synthetic 4D image, each TP shifted by `shift_px` voxels in X.
+
+    Uses ``sitk.JoinSeries`` to produce a genuine 4-D SimpleITK image.
+    ``sitk.GetImageFromArray`` on a raw 4-D numpy array yields a 3-D image
+    (the leading dimension is folded into Z), which is incorrect here.
+    """
+    volumes_3d = []
     for tp in range(n_tp):
         arr = np.zeros(shape_zyx, dtype=np.float32)
         cz = shape_zyx[0] // 2
@@ -43,12 +47,11 @@ def _make_4d_image(n_tp=N_TP, shape_zyx=SHAPE_ZYX, shift_px=1):
         dist = np.sqrt((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2)
         arr[dist <= 5] = 1.0
         arr = arr + np.random.default_rng(tp).uniform(0, 0.05, shape_zyx).astype(np.float32)
-        volumes.append(arr)
-    stack = np.stack(volumes, axis=0)
-    img = sitk.GetImageFromArray(stack)
-    img.SetSpacing(tuple([1.0] * 4))
-    img.SetOrigin(tuple([0.0] * 4))
-    return img
+        vol = sitk.GetImageFromArray(arr)
+        vol.SetSpacing((1.0, 1.0, 1.0))
+        vol.SetOrigin((0.0, 0.0, 0.0))
+        volumes_3d.append(vol)
+    return sitk.JoinSeries(volumes_3d)
 
 
 def _make_seg_ref(shape_zyx=SHAPE_ZYX):
@@ -74,23 +77,16 @@ def _write_images(tmp_path):
 
 
 def _flush_async_writer():
-    """Wait for all async write tasks to complete, then reinitialize the global writer."""
-    from segflow4d.utility.file_writer.async_writer import AsyncWriter
-    _aw_module.async_writer.shutdown(wait=True)
-    # Reinitialise so the global singleton is usable again
-    new_writer = AsyncWriter()
-    _aw_module.async_writer = new_writer
-    # Rebind in all modules that already imported the object
-    try:
-        import segflow4d.utility.file_writer as _fw
-        _fw.async_writer = new_writer
-    except Exception:
-        pass
-    try:
-        import segflow4d.propagation.tp_partition as _tp
-        _tp.async_writer = new_writer
-    except Exception:
-        pass
+    """Block until all async write tasks have completed.
+
+    Uses flush() (not shutdown) so the worker thread stays alive and can
+    serve subsequent tests without needing rebinding tricks.
+    """
+    import sys, importlib
+    aw_mod = sys.modules.get('segflow4d.utility.file_writer.async_writer')
+    if aw_mod is None:
+        aw_mod = importlib.import_module('segflow4d.utility.file_writer.async_writer')
+    aw_mod.async_writer.flush()
 
 
 def _build_input(img_path, seg_path, out_dir, write_to_disk=True):

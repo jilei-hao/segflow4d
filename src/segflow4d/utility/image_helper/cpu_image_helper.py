@@ -30,8 +30,10 @@ class CPUImageHelper(AbstractImageHelper):
 
         original_size = image_data.GetSize()
         original_spacing = image_data.GetSpacing()
-        new_size = [int(sz * resample_factor) for sz in original_size]
-        new_spacing = [sp / resample_factor for sp in original_spacing]
+        # resample_factor > 1 → coarser (lower-resolution) output:
+        #   fewer pixels, larger spacing (e.g., lowres_resample_factor=2 halves each dimension)
+        new_size = [max(1, int(sz / resample_factor)) for sz in original_size]
+        new_spacing = [sp * resample_factor for sp in original_spacing]
 
         resample_filter = sitk.ResampleImageFilter()
         resample_filter.SetSize(new_size)
@@ -80,8 +82,8 @@ class CPUImageHelper(AbstractImageHelper):
         if image_data is None:
             raise ValueError("Input 4D image data is None.")
         size = list(image_data.GetSize())
-        size[3] = 0  # Extract along the 4th dimension
-        index = [0, 0, 0, timepoint - 1]  # timepoint is 1-based index
+        size[3] = 0  # Collapse the 4th dimension to extract a single 3-D volume
+        index = [0, 0, 0, timepoint]  # timepoint is 0-based index
         extractor.SetSize(size)
         extractor.SetIndex(index)
         return ImageWrapper(extractor.Execute(image_data))

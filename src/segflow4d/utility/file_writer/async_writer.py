@@ -63,6 +63,14 @@ class AsyncWriter:
         self._q.put(_Task(writer=vtk_polydata_writer, data=polydata, filename=filename))
         logger.info(f"AsyncWriter: Submitted mesh write task for {filename}")
 
+    def flush(self) -> None:
+        """Block until all currently-queued tasks have been processed.
+
+        Unlike :meth:`shutdown`, this does not terminate the background thread,
+        so the writer can be reused immediately after.
+        """
+        self._q.join()
+
     def shutdown(self, wait: bool = True) -> None:
         """Signal the worker to exit."""
         self._q.put(None)

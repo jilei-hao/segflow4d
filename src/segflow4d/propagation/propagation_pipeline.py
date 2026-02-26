@@ -69,9 +69,9 @@ class PropagationPipeline:
         mask_low_res = tp_data[tp_ref].mask_low_res
         if mask_low_res is not None:
             tp_input_data[tp_ref].resliced_image = mask_low_res.deepcopy()
-        seg_mesh = tp_data[tp_ref].segmentation_mesh
-        if seg_mesh is not None:
-            tp_input_data[tp_ref].segmentation_mesh = seg_mesh.deepcopy()
+        # The low-res stage propagates masks only — do NOT pass segmentation_mesh here.
+        # Mesh reslicing happens in the high-res stage (star strategy) where
+        # tp_input_data_hr[tp_ref].segmentation_mesh is set from ref_input.seg_mesh_ref.
         
         # Initialize variables
         propagated_data_lr = None

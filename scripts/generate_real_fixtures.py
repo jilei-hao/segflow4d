@@ -38,7 +38,10 @@ REF_IDX = 0   # file index for TP 48
 TGT_IDXS = [1, 2]  # file indices for TP 49, 50
 
 # Crop size in voxels (X, Y, Z) — centred on the segmentation's bounding box
-CROP_XYZ = (64, 64, 32)
+# Z must be >= 64 so that after lowres_factor=2.0 the downsampled Z (32) stays
+# at or above FireANTs' MIN_IMG_SIZE=32; smaller values cause downsample_fft to
+# produce zero-length slices and raise "Invalid number of data points (0)".
+CROP_XYZ = (64, 64, 64)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -187,11 +190,14 @@ def main():
         out_dir = os.path.join(tmp_dir, "output")
         os.makedirs(out_dir, exist_ok=True)
 
+        import sys as _sys
         from segflow4d.common.types.propagation_input import PropagationInputFactory
         from segflow4d.propagation.propagation_pipeline import PropagationPipeline
         from segflow4d.utility.validation.segmentation_validation import evaluate_segmentation
-        import segflow4d.utility.file_writer.async_writer as _aw_module
-        from segflow4d.utility.file_writer.async_writer import AsyncWriter
+        # Import the module via sys.modules to avoid getting the re-exported instance
+        # from file_writer/__init__.py (which shadows the submodule name).
+        import segflow4d.utility.file_writer.async_writer  # ensure it's in sys.modules
+        _aw_module = _sys.modules['segflow4d.utility.file_writer.async_writer']
 
         prop_input = (
             PropagationInputFactory()
@@ -203,7 +209,9 @@ def main():
                 additional_meshes_ref=None,
             )
             .set_options(
-                lowres_factor=2.0,
+                lowres_factor=1.0,  # keep at 1.0 for small crops: lowres_factor=2.0 would halve
+                                    # 64-voxel dims to 32, then downsample_fft(32→32) produces
+                                    # 0-length FFT slices and crashes with "Invalid number of data points"
                 registration_backend="FIREANTS",
                 dilation_radius=3,
                 write_result_to_disk=True,
@@ -216,9 +224,10 @@ def main():
         pipeline = PropagationPipeline(prop_input)
         pipeline.run()
 
-        # Flush async writer
-        _aw_module.async_writer.shutdown(wait=True)
-        _aw_module.async_writer = AsyncWriter()
+        # Flush async writer — use flush() (not shutdown) so the worker thread
+        # stays alive; the installed pipeline code holds a direct reference to
+        # the singleton instance.
+        _aw_module.async_writer.flush()
 
         # Compute Dice against reference segmentation
         seg_4d = sitk.ReadImage(os.path.join(out_dir, "seg-4d.nii.gz"))
