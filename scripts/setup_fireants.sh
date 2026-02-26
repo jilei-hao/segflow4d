@@ -37,6 +37,26 @@ done
 # ── Sanity checks ─────────────────────────────────────────────────────────────
 echo "==> Checking prerequisites..."
 
+# Verify a conda environment is activated (and not just the base env).
+if [[ -z "${CONDA_PREFIX:-}" ]]; then
+  echo "ERROR: No conda environment is active (\$CONDA_PREFIX is unset)." >&2
+  echo "       Please run: conda activate <env-name>" >&2
+  exit 1
+fi
+
+if [[ "${CONDA_DEFAULT_ENV:-base}" == "base" ]]; then
+  echo "WARNING: You are running in the 'base' conda environment." >&2
+  echo "         This is likely unintended. Consider activating a dedicated env:" >&2
+  echo "           conda activate <your-env>" >&2
+  echo ""
+  read -rp "         Continue anyway? [y/N] " _answer
+  if [[ "${_answer}" != [yY] ]]; then
+    exit 1
+  fi
+fi
+
+echo "    Conda env    : ${CONDA_DEFAULT_ENV:-unknown} (${CONDA_PREFIX})"
+
 if ! command -v python &>/dev/null; then
   echo "ERROR: python not found. Please activate your conda environment first." >&2
   exit 1
@@ -88,14 +108,43 @@ else
       echo "ERROR: conda not found. Please install cuda-toolkit ${TORCH_CUDA_VER} manually." >&2
       exit 1
     fi
-    # Install compiler + runtime headers — both are needed to build CUDA extensions
-    conda install -y -c nvidia "cuda-nvcc=${TORCH_CUDA_VER}.*" "cuda-cudart-dev=${TORCH_CUDA_VER}.*"
+    # Install compiler + runtime/library headers — all are needed to build CUDA extensions
+    conda install -y -c nvidia \
+      "cuda-nvcc=${TORCH_CUDA_VER}.*" \
+      "cuda-cudart-dev=${TORCH_CUDA_VER}.*" \
+      "cuda-libraries-dev=${TORCH_CUDA_VER}.*"
   fi
 
   # Even when nvcc version already matched, cuda-cudart-dev (which provides
   # cuda_runtime.h) may still be missing — the cuda-nvcc package alone does
   # NOT include it.  Install it idempotently if the header is absent.
-  if [[ ! -f "${CONDA_PREFIX}/include/cuda_runtime.h" ]]; then
+  # Conda places headers under targets/x86_64-linux/include/ rather than
+  # directly under include/.
+  # Determine the Python site-packages path dynamically
+  _PY_SITE=$(python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)
+
+  _find_cuda_runtime_h() {
+    local prefix="$1"
+    local _candidates=(
+      "${prefix}/include"
+      "${prefix}/targets/x86_64-linux/include"
+    )
+    # Also check the pip-installed nvidia package if site-packages is known
+    if [[ -n "${_PY_SITE:-}" ]]; then
+      _candidates+=("${_PY_SITE}/nvidia/cuda_runtime/include")
+    fi
+    for d in "${_candidates[@]}"; do
+      if [[ -f "${d}/cuda_runtime.h" ]]; then
+        echo "${d}"
+        return 0
+      fi
+    done
+    return 1
+  }
+
+  CUDA_RUNTIME_H_DIR=""
+  _find_cuda_runtime_h "${CONDA_PREFIX}" && CUDA_RUNTIME_H_DIR=$(_find_cuda_runtime_h "${CONDA_PREFIX}")
+  if [[ -z "${CUDA_RUNTIME_H_DIR}" ]]; then
     echo "    cuda_runtime.h not found — installing cuda-cudart-dev=${TORCH_CUDA_VER}..."
     if ! command -v conda &>/dev/null; then
       echo "ERROR: conda not found. Please install cuda-cudart-dev manually:" >&2
@@ -105,8 +154,15 @@ else
     conda install -y -c nvidia "cuda-cudart-dev=${TORCH_CUDA_VER}.*"
   fi
 
-  # Locate nvcc inside the conda env (takes priority over system nvcc)
-  CONDA_NVCC=$(find "${CONDA_PREFIX}" -name "nvcc" -type f 2>/dev/null | head -1)
+  # Locate nvcc inside the active conda env (check bin/ directly to avoid
+  # picking up nvcc from a different env when CONDA_PREFIX is the base).
+  CONDA_NVCC=""
+  if [[ -x "${CONDA_PREFIX}/bin/nvcc" ]]; then
+    CONDA_NVCC="${CONDA_PREFIX}/bin/nvcc"
+  else
+    # Fallback: search within the env (but NOT the base miniconda tree)
+    CONDA_NVCC=$(find "${CONDA_PREFIX}" -maxdepth 4 -name "nvcc" -type f 2>/dev/null | head -1)
+  fi
   if [[ -n "${CONDA_NVCC}" ]]; then
     CONDA_CUDA_BIN=$(dirname "${CONDA_NVCC}")
     export PATH="${CONDA_CUDA_BIN}:${PATH}"
@@ -121,6 +177,19 @@ else
   else
     echo "ERROR: nvcc not found in conda env after install. Check conda channel availability." >&2
     exit 1
+  fi
+
+  # Re-locate cuda_runtime.h now that CUDA_HOME is resolved, and export
+  # CPATH so both nvcc and the host compiler can find the header.
+  CUDA_RUNTIME_H_DIR=""
+  for _search_root in "${CUDA_HOME}" "${CONDA_PREFIX}"; do
+    if [[ -n "${_search_root}" ]]; then
+      _find_cuda_runtime_h "${_search_root}" && CUDA_RUNTIME_H_DIR=$(_find_cuda_runtime_h "${_search_root}") && break
+    fi
+  done
+  if [[ -n "${CUDA_RUNTIME_H_DIR}" ]]; then
+    export CPATH="${CUDA_RUNTIME_H_DIR}:${CPATH:-}"
+    echo "    cuda_runtime.h : ${CUDA_RUNTIME_H_DIR}/cuda_runtime.h"
   fi
 fi
 
@@ -156,10 +225,44 @@ except AttributeError:
 print(f"    Supported archs: {supported}")
 
 target = f"sm_{cc_major}{cc_minor}"
-# Also accept 'compute_XX' style entries
-supported_set = set(supported) | {a.replace("sm_", "compute_") for a in supported}
 
-if supported and target not in supported and f"compute_{cc_major}{cc_minor}" not in supported_set:
+# CUDA forward compatibility: a binary compiled for sm_XA will run on any GPU
+# with compute capability X.B where B >= A (same major version).  We also
+# accept PTX ("compute_XX") entries — PTX for compute_XA is JIT-compiled and
+# will run on any sm_XB with B >= A.
+import re
+
+def _parse_arch(name):
+    """Return (major, minor) from 'sm_89', 'compute_86', 'sm_100', etc.
+
+    CUDA arch naming convention:
+      - 2 digits: first = major, second = minor  (sm_70 → 7.0, sm_89 → 8.9)
+      - 3+ digits: all-but-last = major, last = minor (sm_100 → 10.0, sm_120 → 12.0)
+    """
+    m = re.match(r'(?:sm|compute)_(\d+)', name)
+    if not m:
+        return None
+    digits = m.group(1)
+    if len(digits) <= 2:
+        return int(digits[0]), int(digits[1:])
+    else:
+        return int(digits[:-1]), int(digits[-1])
+
+gpu_cap = (cc_major, cc_minor)
+is_supported = False
+if supported:
+    for arch_name in supported:
+        parsed = _parse_arch(arch_name)
+        if parsed is None:
+            continue
+        arch_major, arch_minor = parsed
+        # Same major version and the supported arch minor <= GPU minor
+        # means forward compatibility covers this GPU.
+        if arch_major == cc_major and arch_minor <= cc_minor:
+            is_supported = True
+            break
+
+if supported and not is_supported:
     print(f"\nERROR: Your GPU ({gpu_name}, compute capability {cc}) is NOT supported", file=sys.stderr)
     print(f"       by the installed PyTorch (torch.version.cuda = {torch.version.cuda}).", file=sys.stderr)
     print(f"       The highest supported arch in this build is: {supported[-1]}", file=sys.stderr)
@@ -201,8 +304,21 @@ pushd "${FUSED_OPS_DIR}" > /dev/null
 unset NVCC_PREPEND_FLAGS NVCC_APPEND_FLAGS CUDAHOSTCXX 2>/dev/null || true
 
 # Verify cuda_runtime.h is reachable before attempting the build.
-if [[ ! -f "${CONDA_PREFIX}/include/cuda_runtime.h" ]] && \
-   [[ -z "${CUDA_HOME}" || ! -f "${CUDA_HOME}/include/cuda_runtime.h" ]]; then
+# Search the standard locations including conda's targets/ subdirectory.
+CUDA_RT_FOUND=false
+for _d in \
+  "${CUDA_HOME:-}/include" \
+  "${CUDA_HOME:-}/targets/x86_64-linux/include" \
+  "${CONDA_PREFIX:-}/include" \
+  "${CONDA_PREFIX:-}/targets/x86_64-linux/include"; do
+  if [[ -f "${_d}/cuda_runtime.h" ]]; then
+    CUDA_RT_FOUND=true
+    # Ensure the directory is on CPATH so the compiler can find it.
+    export CPATH="${_d}:${CPATH:-}"
+    break
+  fi
+done
+if ! ${CUDA_RT_FOUND}; then
   echo "ERROR: cuda_runtime.h not found. Install cuda-cudart-dev:" >&2
   echo "       conda install -c nvidia cuda-cudart-dev" >&2
   exit 1
@@ -255,6 +371,17 @@ print(';'.join(caps) if caps else '')
 if [[ -n "${GPU_ARCH_LIST}" ]]; then
   export TORCH_CUDA_ARCH_LIST="${GPU_ARCH_LIST}"
   echo "    TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
+fi
+
+# ── Ensure CXX11 ABI matches PyTorch ──────────────────────────────────────────
+# PyTorch pip wheels are typically built with _GLIBCXX_USE_CXX11_ABI=0 (old ABI).
+# Conda-installed compilers default to the new ABI (=1).  A mismatch causes
+# "undefined symbol" errors at import time (e.g. c10::Error with std::__cxx11::
+# basic_string).  Force the fused ops build to use the same ABI as PyTorch.
+TORCH_CXX11_ABI=$(python -c "import torch; print(int(torch.compiled_with_cxx11_abi()))" 2>/dev/null || echo "")
+if [[ -n "${TORCH_CXX11_ABI}" ]]; then
+  export CXXFLAGS="${CXXFLAGS:-} -D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11_ABI}"
+  echo "    _GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11_ABI}"
 fi
 
 python setup.py build_ext

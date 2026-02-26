@@ -4,6 +4,7 @@ log_level: INFO
 lowres_factor: 0.5
 dilation_radius: 2
 registration_backend: fireants
+minimum_required_vram_gb: 10
 registration_backend_options:
   smooth_grad_sigma_mm: 3.0
   smooth_warp_sigma_mm: 1.5
