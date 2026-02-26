@@ -5,14 +5,12 @@ This tool compares segmentation images from a reference directory against
 target directory based on filename patterns, computing Dice, MSD, and HD95 metrics.
 """
 
-from __future__ import annotations
 import argparse
 import json
 import logging
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
 from dataclasses import asdict
 
 import numpy as np
@@ -37,7 +35,7 @@ logger = logging.getLogger(__name__)
 def find_matching_files(
     directory: Path,
     pattern: str
-) -> List[Path]:
+) -> list[Path]:
     """
     Find files matching a glob pattern in the given directory.
     
@@ -100,11 +98,11 @@ def extract_identifier(filepath: Path, pattern: str) -> str:
 
 
 def match_file_pairs(
-    ref_files: List[Path],
-    tgt_files: List[Path],
+    ref_files: list[Path],
+    tgt_files: list[Path],
     ref_pattern: str,
     tgt_pattern: str
-) -> List[Tuple[Path, Path, str]]:
+) -> list[tuple[Path, Path, str]]:
     """
     Match reference and target files by sorted rank (1st with 1st, 2nd with 2nd, etc.).
     
@@ -153,8 +151,8 @@ def validate_images_compatible(
     tgt_path: Path,
     ref_arr: np.ndarray,
     tgt_arr: np.ndarray,
-    ref_spacing: Tuple[float, float, float],
-    tgt_spacing: Tuple[float, float, float]
+    ref_spacing: tuple[float, float, float],
+    tgt_spacing: tuple[float, float, float]
 ) -> None:
     """
     Validate that reference and target images are compatible for comparison.
@@ -194,8 +192,8 @@ def validate_images_compatible(
 
 
 def _process_single_pair(
-    pair_data: Tuple[Path, Path, str, int, int, Optional[List[int]], int]
-) -> Tuple[str, Optional[ValidationResult], Optional[str]]:
+    pair_data: tuple[Path, Path, str, int, int, list[int] | None, int]
+) -> tuple[str, ValidationResult | None, str | None]:
     """
     Worker function to process a single validation pair.
     
@@ -246,10 +244,10 @@ def batch_validate_segmentation(
     ref_pattern: str,
     tgt_dir: Path,
     tgt_pattern: str,
-    labels: Optional[List[int]] = None,
+    labels: list[int] | None = None,
     background_label: int = 0,
     num_workers: int = 1
-) -> Dict[str, ValidationResult]:
+) -> dict[str, ValidationResult]:
     """
     Batch validate segmentation images from two directories.
     
@@ -290,7 +288,7 @@ def batch_validate_segmentation(
     logger.info(f"Processing with {num_workers} parallel workers...")
     
     # Process each pair
-    results: Dict[str, ValidationResult] = {}
+    results: dict[str, ValidationResult] = {}
     
     if num_workers == 1:
         # Sequential processing (original behavior)
@@ -351,7 +349,7 @@ def batch_validate_segmentation(
     return results
 
 
-def results_to_dict(results: Dict[str, ValidationResult]) -> Dict:
+def results_to_dict(results: dict[str, ValidationResult]) -> dict:
     """
     Convert ValidationResult objects to a JSON-serializable dictionary.
     
@@ -387,7 +385,7 @@ def results_to_dict(results: Dict[str, ValidationResult]) -> Dict:
     return output
 
 
-def print_summary(results: Dict[str, ValidationResult]) -> None:
+def print_summary(results: dict[str, ValidationResult]) -> None:
     """
     Print a summary of validation results.
     
@@ -429,7 +427,7 @@ def print_summary(results: Dict[str, ValidationResult]) -> None:
     print("="*80)
 
 
-def plot_metrics(results: Dict[str, ValidationResult], output_path: Path) -> None:
+def plot_metrics(results: dict[str, ValidationResult], output_path: Path) -> None:
     """
     Create plots showing how metrics change across file numbers.
     

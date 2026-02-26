@@ -8,7 +8,6 @@ and cleanup operations.
 import gc
 import logging
 import multiprocessing
-from typing import Dict, Optional
 
 import torch
 
@@ -58,7 +57,7 @@ class GPUDeviceManager:
         return torch.cuda.is_available()
     
     @staticmethod
-    def get_gpu_memory_usage(device_id: int = 0) -> Optional[Dict]:
+    def get_gpu_memory_usage(device_id: int = 0) -> dict | None:
         """
         Get GPU memory usage for a specific device (in MB).
         
@@ -138,7 +137,7 @@ class GPUDeviceManager:
         return safe_free >= required_mb
     
     @staticmethod
-    def cleanup_gpu_memory(device_id: int = 0) -> Dict:
+    def cleanup_gpu_memory(device_id: int = 0) -> dict:
         """
         GPU memory cleanup for a specific device.
         

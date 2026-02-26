@@ -9,13 +9,14 @@ class InterpolationType(Enum):
 
 
 def sitk_interpolation_from_type(interp_type: InterpolationType) -> int:
-    if interp_type == InterpolationType.NEAREST:
-        return sitk.sitkNearestNeighbor
-    elif interp_type == InterpolationType.LINEAR:
-        return sitk.sitkLinear
-    elif interp_type == InterpolationType.BSPLINE:
-        return sitk.sitkBSpline
-    elif interp_type == InterpolationType.GAUSSIAN:
-        return sitk.sitkGaussian
-    else:
-        raise ValueError(f"Unsupported interpolation type: {interp_type}")
+    match interp_type:
+        case InterpolationType.NEAREST:
+            return sitk.sitkNearestNeighbor
+        case InterpolationType.LINEAR:
+            return sitk.sitkLinear
+        case InterpolationType.BSPLINE:
+            return sitk.sitkBSpline
+        case InterpolationType.GAUSSIAN:
+            return sitk.sitkGaussian
+        case _:
+            raise ValueError(f"Unsupported interpolation type: {interp_type}")

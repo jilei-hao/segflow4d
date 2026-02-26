@@ -5,7 +5,6 @@ CPU-based registration manager using ThreadPoolExecutor.
 import logging
 import multiprocessing
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Optional
 
 from segflow4d.registration.registration_manager.abstract_registration_manager import AbstractRegistrationManager
 
@@ -20,7 +19,7 @@ class CPURegistrationManager(AbstractRegistrationManager):
     is explicitly requested.
     """
     
-    def __init__(self, registration_backend: str, max_workers: Optional[int] = None):
+    def __init__(self, registration_backend: str, max_workers: int | None = None):
         """
         Initialize CPU registration manager.
         

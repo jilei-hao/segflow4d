@@ -18,7 +18,6 @@ from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing import Queue as MPQueue
 from multiprocessing.process import BaseProcess
 from queue import Empty, Queue
-from typing import Dict, List, Optional
 
 import torch
 
@@ -62,7 +61,7 @@ class ThreadJobDispatcher:
         # Device state tracking
         self._gpu_count = GPUDeviceManager.get_gpu_count()
         self._device_lock = threading.Lock()
-        self._device_busy: Dict[int, bool] = {i: False for i in range(self._gpu_count)}
+        self._device_busy: dict[int, bool] = {i: False for i in range(self._gpu_count)}
         
         # Thread pool for executing jobs
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="GPUJobRunner")
@@ -98,7 +97,7 @@ class ThreadJobDispatcher:
         
         return future
     
-    def _find_available_device(self, required_vram_mb: float) -> Optional[int]:
+    def _find_available_device(self, required_vram_mb: float) -> int | None:
         """Find a device that is not busy and has sufficient VRAM."""
         with self._device_lock:
             for device_id in range(self._gpu_count):
@@ -124,7 +123,7 @@ class ThreadJobDispatcher:
             self._device_busy[device_id] = False
             logger.info(f"Device {device_id} released")
     
-    def _get_device_status(self) -> Dict[int, Dict]:
+    def _get_device_status(self) -> dict[int, dict]:
         """Get status of all devices."""
         status = {}
         with self._device_lock:
@@ -136,7 +135,7 @@ class ThreadJobDispatcher:
                 }
         return status
     
-    def _run_job_on_device(self, job: Dict, device_id: int):
+    def _run_job_on_device(self, job: dict, device_id: int):
         """Execute a job on a specific device."""
         method_name = job['method_name']
         args = job['args']
@@ -225,7 +224,7 @@ class ThreadJobDispatcher:
         """Get current queue size."""
         return self._job_queue.qsize()
     
-    def get_device_status(self) -> Dict[int, Dict]:
+    def get_device_status(self) -> dict[int, dict]:
         """Get public device status."""
         return self._get_device_status()
     
@@ -264,9 +263,9 @@ class ProcessJobDispatcher:
         self._job_queue: Queue = Queue()
         self._gpu_count = GPUDeviceManager.get_gpu_count()
         self._device_lock = threading.Lock()
-        self._device_busy: Dict[int, bool] = {i: False for i in range(self._gpu_count)}
+        self._device_busy: dict[int, bool] = {i: False for i in range(self._gpu_count)}
         
-        self._pending_jobs: List[Dict] = []
+        self._pending_jobs: list[dict] = []
         self._pending_lock = threading.Lock()
         
         self._mp_context = mp.get_context('spawn')
@@ -315,7 +314,7 @@ class ProcessJobDispatcher:
         
         return user_future
     
-    def _find_available_device(self, required_vram_mb: float) -> Optional[int]:
+    def _find_available_device(self, required_vram_mb: float) -> int | None:
         """Find a device that is not busy and has sufficient VRAM."""
         with self._device_lock:
             for device_id in range(self._gpu_count):
@@ -338,7 +337,7 @@ class ProcessJobDispatcher:
             self._device_busy[device_id] = False
             logger.info(f"Device {device_id} released")
     
-    def _get_device_status(self) -> Dict[int, Dict]:
+    def _get_device_status(self) -> dict[int, dict]:
         """Get status of all devices."""
         status = {}
         with self._device_lock:
@@ -367,7 +366,7 @@ class ProcessJobDispatcher:
         finally:
             self._release_device(device_id)
     
-    def _dispatch_job(self, job: Dict) -> bool:
+    def _dispatch_job(self, job: dict) -> bool:
         """Try to dispatch a single job to an available device."""
         required_vram = job['required_vram_mb']
         device_id = self._find_available_device(required_vram)
@@ -466,7 +465,7 @@ class ProcessJobDispatcher:
         """Get current queue size."""
         return self._job_queue.qsize()
     
-    def get_device_status(self) -> Dict[int, Dict]:
+    def get_device_status(self) -> dict[int, dict]:
         """Get public device status."""
         return self._get_device_status()
     
@@ -508,10 +507,10 @@ class PersistentProcessJobDispatcher:
         self._job_counter_lock = threading.Lock()
         
         self._mp_context = mp.get_context('spawn')
-        self._job_queues: Dict[int, MPQueue] = {}
-        self._result_queues: Dict[int, MPQueue] = {}
-        self._workers: Dict[int, BaseProcess] = {}
-        self._pending_futures: Dict[int, Future] = {}
+        self._job_queues: dict[int, MPQueue] = {}
+        self._result_queues: dict[int, MPQueue] = {}
+        self._workers: dict[int, BaseProcess] = {}
+        self._pending_futures: dict[int, Future] = {}
         self._pending_futures_lock = threading.Lock()
         
         for device_id in range(min(max_workers, self._gpu_count)):
@@ -530,10 +529,10 @@ class PersistentProcessJobDispatcher:
             self._workers[device_id] = worker
         
         self._device_lock = threading.Lock()
-        self._device_busy: Dict[int, bool] = {i: False for i in range(self._gpu_count)}
+        self._device_busy: dict[int, bool] = {i: False for i in range(self._gpu_count)}
         
         self._job_queue: Queue = Queue()
-        self._pending_jobs: List[Dict] = []
+        self._pending_jobs: list[dict] = []
         self._pending_lock = threading.Lock()
         
         self._running = True
@@ -600,7 +599,7 @@ class PersistentProcessJobDispatcher:
         self._job_queue.put(job)
         return user_future
     
-    def _find_available_device(self, required_vram_mb: float) -> Optional[int]:
+    def _find_available_device(self, required_vram_mb: float) -> int | None:
         """Find available device."""
         with self._device_lock:
             for device_id in self._workers.keys():
@@ -613,7 +612,7 @@ class PersistentProcessJobDispatcher:
                     return device_id
         return None
     
-    def _get_device_status(self) -> Dict[int, Dict]:
+    def _get_device_status(self) -> dict[int, dict]:
         """Get status of all devices."""
         status = {}
         with self._device_lock:
@@ -683,7 +682,7 @@ class PersistentProcessJobDispatcher:
         """Get current queue size."""
         return self._job_queue.qsize()
     
-    def get_device_status(self) -> Dict[int, Dict]:
+    def get_device_status(self) -> dict[int, dict]:
         """Get public device status."""
         return self._get_device_status()
     
@@ -708,7 +707,7 @@ class GPURegistrationManager(AbstractRegistrationManager):
     """
     
     def __init__(self, registration_backend: str,
-                 max_workers: Optional[int] = None,
+                 max_workers: int | None = None,
                  required_vram_mb: float = 10240,
                  vram_check_interval: float = 0.1,
                  use_processes: bool = True,
@@ -776,7 +775,7 @@ class GPURegistrationManager(AbstractRegistrationManager):
         """Get current queue size."""
         return self._dispatcher.get_queue_size()
     
-    def get_device_status(self) -> Dict[int, Dict]:
+    def get_device_status(self) -> dict[int, dict]:
         """Get status of all GPU devices."""
         return self._dispatcher.get_device_status()
     

@@ -10,7 +10,7 @@ Given one or more segmented reference time points, SegFlow4D registers every tar
 
 | Requirement | Version |
 |---|---|
-| Python | ≥ 3.9 |
+| Python | ≥ 3.10 |
 | CUDA toolkit (`nvcc`) | ≥ 11.8 (must match PyTorch CUDA build) |
 | PyTorch | ≥ 1.8 (GPU build recommended) |
 | Conda / Miniconda | any recent version |
@@ -22,7 +22,7 @@ Given one or more segmented reference time points, SegFlow4D registers every tar
 ### 1. Create a conda environment
 
 ```bash
-conda create -n segflow4d python=3.9
+conda create -n segflow4d python=3.10
 conda activate segflow4d
 ```
 
