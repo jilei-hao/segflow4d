@@ -1,0 +1,212 @@
+"""End-to-end tests for the propagation pipeline using synthetic data.
+
+All registration tests are marked @pytest.mark.gpu and are skipped when
+no CUDA device is available.  The smoke test with write_result_to_disk=False
+can run on CPU to verify the pipeline wiring still works (registration will
+run but quality is not asserted without GPU).
+
+Usage:
+    # GPU tests only
+    pytest tests/e2e/test_pipeline_synthetic.py -m gpu -v
+
+    # All (will skip GPU tests on CPU-only machines)
+    pytest tests/e2e/test_pipeline_synthetic.py -v
+"""
+
+import os
+import pytest
+import numpy as np
+import SimpleITK as sitk
+
+from segflow4d.common.types.propagation_input import PropagationInputFactory
+from segflow4d.propagation.propagation_pipeline import PropagationPipeline
+import segflow4d.utility.file_writer.async_writer as _aw_module
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+SHAPE_ZYX = (16, 32, 32)
+N_TP = 3
+
+
+def _make_4d_image(n_tp=N_TP, shape_zyx=SHAPE_ZYX, shift_px=1):
+    """Synthetic 4D image, each TP shifted by `shift_px` voxels in X."""
+    volumes = []
+    for tp in range(n_tp):
+        arr = np.zeros(shape_zyx, dtype=np.float32)
+        cz = shape_zyx[0] // 2
+        cy = shape_zyx[1] // 2
+        cx = shape_zyx[2] // 2 + tp * shift_px
+        zz, yy, xx = np.mgrid[0:shape_zyx[0], 0:shape_zyx[1], 0:shape_zyx[2]]
+        dist = np.sqrt((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2)
+        arr[dist <= 5] = 1.0
+        arr = arr + np.random.default_rng(tp).uniform(0, 0.05, shape_zyx).astype(np.float32)
+        volumes.append(arr)
+    stack = np.stack(volumes, axis=0)
+    img = sitk.GetImageFromArray(stack)
+    img.SetSpacing(tuple([1.0] * 4))
+    img.SetOrigin(tuple([0.0] * 4))
+    return img
+
+
+def _make_seg_ref(shape_zyx=SHAPE_ZYX):
+    """Simple 3-D segmentation with label 1 (sphere)."""
+    arr = np.zeros(shape_zyx, dtype=np.int16)
+    cz, cy, cx = shape_zyx[0] // 2, shape_zyx[1] // 2, shape_zyx[2] // 2
+    zz, yy, xx = np.mgrid[0:shape_zyx[0], 0:shape_zyx[1], 0:shape_zyx[2]]
+    dist = np.sqrt((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2)
+    arr[dist <= 5] = 1
+    img = sitk.GetImageFromArray(arr)
+    img.SetSpacing((1.0, 1.0, 1.0))
+    img.SetOrigin((0.0, 0.0, 0.0))
+    return img
+
+
+def _write_images(tmp_path):
+    """Write synthetic images to disk and return their paths."""
+    img_path = str(tmp_path / "image_4d.nii.gz")
+    seg_path = str(tmp_path / "seg_ref.nii.gz")
+    sitk.WriteImage(_make_4d_image(), img_path)
+    sitk.WriteImage(_make_seg_ref(), seg_path)
+    return img_path, seg_path
+
+
+def _flush_async_writer():
+    """Wait for all async write tasks to complete, then reinitialize the global writer."""
+    from segflow4d.utility.file_writer.async_writer import AsyncWriter
+    _aw_module.async_writer.shutdown(wait=True)
+    # Reinitialise so the global singleton is usable again
+    new_writer = AsyncWriter()
+    _aw_module.async_writer = new_writer
+    # Rebind in all modules that already imported the object
+    try:
+        import segflow4d.utility.file_writer as _fw
+        _fw.async_writer = new_writer
+    except Exception:
+        pass
+    try:
+        import segflow4d.propagation.tp_partition as _tp
+        _tp.async_writer = new_writer
+    except Exception:
+        pass
+
+
+def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
+    os.makedirs(out_dir, exist_ok=True)
+    return (
+        PropagationInputFactory()
+        .set_image_4d_from_disk(img_path)
+        .add_tp_input_group_from_disk(
+            tp_ref=0,
+            tp_target=[1, 2],
+            seg_ref_path=seg_path,
+            additional_meshes_ref=None,
+        )
+        .set_options(
+            lowres_factor=2.0,
+            registration_backend="FIREANTS",
+            dilation_radius=2,
+            write_result_to_disk=write_to_disk,
+            output_directory=out_dir,
+            minimum_required_vram_gb=0,
+            # Minimal iterations for speed
+            scales=[1],
+            affine_iterations=[2],
+            deformable_iterations=[2],
+        )
+        .build()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.gpu
+class TestPipelineSyntheticOutputFiles:
+    def test_pipeline_creates_seg_4d_file(self, tmp_path):
+        img_path, seg_path = _write_images(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input(img_path, seg_path, out_dir, write_to_disk=True)
+        pipeline = PropagationPipeline(prop_input)
+        pipeline.run()
+        _flush_async_writer()
+
+        assert os.path.isfile(os.path.join(out_dir, "seg-4d.nii.gz")), (
+            "seg-4d.nii.gz not found in output directory"
+        )
+
+    def test_pipeline_creates_image_4d_file(self, tmp_path):
+        img_path, seg_path = _write_images(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input(img_path, seg_path, out_dir, write_to_disk=True)
+        pipeline = PropagationPipeline(prop_input)
+        pipeline.run()
+        _flush_async_writer()
+
+        assert os.path.isfile(os.path.join(out_dir, "image-4d.nii.gz")), (
+            "image-4d.nii.gz not found in output directory"
+        )
+
+    def test_pipeline_output_seg_shape_matches_input(self, tmp_path):
+        """Output 4D segmentation must have same spatial dims and timepoint count as input."""
+        img_path, seg_path = _write_images(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input(img_path, seg_path, out_dir, write_to_disk=True)
+        pipeline = PropagationPipeline(prop_input)
+        pipeline.run()
+        _flush_async_writer()
+
+        seg_4d = sitk.ReadImage(os.path.join(out_dir, "seg-4d.nii.gz"))
+        # SITK reports size as (X, Y, Z, T)
+        size = seg_4d.GetSize()
+        assert size[3] == N_TP, f"Expected {N_TP} timepoints, got {size[3]}"
+        assert size[0] == SHAPE_ZYX[2], f"X dim mismatch: {size[0]} vs {SHAPE_ZYX[2]}"
+        assert size[1] == SHAPE_ZYX[1], f"Y dim mismatch: {size[1]} vs {SHAPE_ZYX[1]}"
+        assert size[2] == SHAPE_ZYX[0], f"Z dim mismatch: {size[2]} vs {SHAPE_ZYX[0]}"
+
+
+@pytest.mark.gpu
+class TestPipelineSyntheticSegQuality:
+    def test_propagated_dice_above_threshold(self, tmp_path):
+        """
+        A 1-voxel rigid shift between TPs is trivially registerable.
+        The propagated segmentation at TP1 and TP2 should have Dice >= 0.75
+        compared to the ground-truth (shifted sphere).
+        """
+        from segflow4d.utility.validation.segmentation_validation import evaluate_segmentation
+
+        img_path, seg_path = _write_images(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input(img_path, seg_path, out_dir, write_to_disk=True)
+        pipeline = PropagationPipeline(prop_input)
+        pipeline.run()
+        _flush_async_writer()
+
+        seg_4d_path = os.path.join(out_dir, "seg-4d.nii.gz")
+        seg_4d = sitk.ReadImage(seg_4d_path)
+
+        # Extract TP1 from the 4D output and compare to ground-truth shifted sphere
+        n_tps = seg_4d.GetSize()[3]
+        for tp in range(1, n_tps):
+            extractor = sitk.ExtractImageFilter()
+            size = list(seg_4d.GetSize())
+            size[3] = 0
+            extractor.SetSize(size)
+            extractor.SetIndex([0, 0, 0, tp])
+            tp_seg = extractor.Execute(seg_4d)
+
+            gt_arr = sitk.GetArrayFromImage(sitk.ReadImage(seg_path)).astype(np.int32)
+            pred_arr = sitk.GetArrayFromImage(tp_seg).astype(np.int32)
+
+            result = evaluate_segmentation(pred_arr, gt_arr, spacing=(1.0, 1.0, 1.0))
+            dice = result.macro_avg.dice
+            assert dice >= 0.75, (
+                f"TP {tp}: propagated Dice {dice:.3f} < 0.75 threshold"
+            )

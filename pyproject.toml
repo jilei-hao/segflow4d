@@ -32,5 +32,21 @@ gpu-mesh-warper = "segflow4d.registration.registration_handler.fireants.gpu_mesh
 segmentation-validation = "segflow4d.utility.validation.segmentation_validation:main"
 batch-segmentation-validation = "segflow4d.utility.validation.batch_validation:main"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-json-report>=1.5",
+    "pytest-cov>=4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "gpu: tests that require a CUDA-capable GPU",
+    "slow: tests that take a long time to run",
+    "requires_real_data: tests that require real patient data fixtures",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
