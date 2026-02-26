@@ -19,11 +19,11 @@ def create_reference_mask(seg_ref_image: ImageWrapper, resample_factor: float, d
 
     image_helper = create_image_helper()
 
-    rs_image = image_helper.resample(seg_ref_image, resample_factor=resample_factor, interpolation=InterpolationType.NEAREST)
-    binary_mask = image_helper.binary_threshold(rs_image, lo=1, hi=255)
+    binary_mask = image_helper.binary_threshold(seg_ref_image, lo=1, hi=255)
     dilated_mask = image_helper.binary_dilate(binary_mask, radius=dilation_radius)
+    rs_mask = image_helper.resample(dilated_mask, resample_factor=resample_factor, interpolation=InterpolationType.NEAREST)
 
-    return dilated_mask
+    return rs_mask
 
 def create_tp_images(image4d: ImageWrapper, target_timepoints: list[int], resample_factor: float) -> dict[int, TPImageGroup]:
     """
