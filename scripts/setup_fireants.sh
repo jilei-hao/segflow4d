@@ -298,6 +298,13 @@ echo ""
 echo "==> Building fused CUDA operations in ${FUSED_OPS_DIR}..."
 pushd "${FUSED_OPS_DIR}" > /dev/null
 
+# Clean previous build artefacts so that stale object files (possibly
+# compiled with a different _GLIBCXX_USE_CXX11_ABI) are never reused.
+if [[ -d build ]]; then
+  echo "    Cleaning previous build directory..."
+  rm -rf build
+fi
+
 # Clear stale environment variables that may inject wrong host-compiler paths
 # into nvcc (e.g. NVCC_PREPEND_FLAGS=-ccbin ... left over from a previously
 # activated conda environment with gcc_linux-64 / gxx_linux-64).
