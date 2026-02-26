@@ -1,6 +1,6 @@
 from segflow4d.common.types.abstract_registration_options import AbstractRegistrationOptions
 from dataclasses import dataclass, field
-from typing import Any, List, Literal, Optional
+from typing import Any, Literal
 
 @dataclass
 class FireantsRegistrationOptions(AbstractRegistrationOptions):
@@ -21,9 +21,9 @@ class FireantsRegistrationOptions(AbstractRegistrationOptions):
         torch_dtype: Accepted from config but currently ignored (fused ops require float32).
     """
     
-    scales: List[float] = field(default_factory=lambda: [4, 2, 1])
-    affine_iterations: List[int] = field(default_factory=lambda: [200, 100, 50])
-    deformable_iterations: List[int] = field(default_factory=lambda: [200, 100, 25])
+    scales: list[float] = field(default_factory=lambda: [4, 2, 1])
+    affine_iterations: list[int] = field(default_factory=lambda: [200, 100, 50])
+    deformable_iterations: list[int] = field(default_factory=lambda: [200, 100, 25])
     affine_lr: float = 3e-3
     deformable_lr: float = 0.5
     loss_type: Literal['mse', 'cc'] = 'mse'

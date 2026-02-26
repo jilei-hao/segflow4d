@@ -7,7 +7,6 @@ from segflow4d.propagation.tp_partition_input import TPPartitionInput
 from segflow4d.common.types.propagation_options import PropagationOptions
 from SimpleITK import Image, ReadImage
 from vtkmodules.vtkCommonDataModel import vtkPolyData
-from typing import Optional
 from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
 from logging import getLogger
 
@@ -18,7 +17,7 @@ class PropagationInput:
     '''
     A class representing the input required for running the propagation pipeline.
     '''
-    image_4d: Optional[ImageWrapper]
+    image_4d: ImageWrapper | None
     tp_input_groups: list[TPPartitionInput]
     options: PropagationOptions
 
@@ -36,7 +35,7 @@ class PropagationInputFactory:
         self._image_4d = image
         return self
     
-    def add_tp_input_group(self, tp_ref, tp_target, seg_ref: Image, additional_meshes_ref: Optional[dict[str, vtkPolyData]]) -> 'PropagationInputFactory':
+    def add_tp_input_group(self, tp_ref, tp_target, seg_ref: Image, additional_meshes_ref: dict[str, vtkPolyData] | None) -> 'PropagationInputFactory':
         if not hasattr(self, '_tp_input_groups'):
             self._tp_input_groups = []
 

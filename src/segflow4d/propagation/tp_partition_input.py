@@ -1,6 +1,5 @@
 from segflow4d.common.types.mesh_wrapper import MeshWrapper
 from segflow4d.common.types.image_wrapper import ImageWrapper
-from typing import Optional
 from segflow4d.processing.segmentation_mesh_generator.multi_label_seg_mesh_generator import (
     MultiLabelSegMeshGenerator, MultiLabelSegMeshGeneratorOptions, MultiLabelSegMeshMethods
 )
@@ -15,10 +14,10 @@ class TPPartitionInput:
     '''
     def __init__(self, 
         seg_ref: ImageWrapper,
-        additional_meshes_ref: Optional[dict[str, MeshWrapper]],
+        additional_meshes_ref: dict[str, MeshWrapper] | None,
         tp_ref: int,
         tp_target: list[int],
-        seg_ref_mesh: Optional[MeshWrapper] = None
+        seg_ref_mesh: MeshWrapper | None = None
     ):
         self.seg_ref = seg_ref
         self.additional_meshes_ref = additional_meshes_ref

@@ -3,7 +3,6 @@ Factory and singleton for creating registration managers.
 """
 
 import logging
-from typing import Dict, Optional
 
 import torch
 from concurrent.futures import Future
@@ -24,7 +23,7 @@ class RegistrationManagerFactory:
     
     @staticmethod
     def create(registration_backend: str,
-               max_workers: Optional[int] = None,
+               max_workers: int | None = None,
                required_vram_mb: float = 10240,
                vram_check_interval: float = 0.1,
                use_processes: bool = True,
@@ -71,11 +70,11 @@ class RegistrationManager:
     Automatically creates the appropriate manager type based on hardware.
     """
     
-    _instance: Optional['RegistrationManager'] = None
+    _instance: 'RegistrationManager | None' = None
     _initialized: bool = False
     
-    def __new__(cls, registration_backend: Optional[str] = None,
-                number_of_concurrent_runners: Optional[int] = None,
+    def __new__(cls, registration_backend: str | None = None,
+                number_of_concurrent_runners: int | None = None,
                 required_vram_mb: float = 10240,
                 vram_check_interval: float = 0.1,
                 use_processes: bool = True,
@@ -85,8 +84,8 @@ class RegistrationManager:
             cls._instance = super(RegistrationManager, cls).__new__(cls)
         return cls._instance
     
-    def __init__(self, registration_backend: Optional[str] = None,
-                 number_of_concurrent_runners: Optional[int] = None,
+    def __init__(self, registration_backend: str | None = None,
+                 number_of_concurrent_runners: int | None = None,
                  required_vram_mb: float = 10240,
                  vram_check_interval: float = 0.1,
                  use_processes: bool = True,
@@ -153,7 +152,7 @@ class RegistrationManager:
         """Get current number of pending jobs."""
         return self._manager.get_queue_size()
     
-    def get_device_status(self) -> Dict[int, Dict]:
+    def get_device_status(self) -> dict[int, dict]:
         """Get status of all GPU devices."""
         return self._manager.get_device_status()
     

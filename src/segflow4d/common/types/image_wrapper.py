@@ -2,36 +2,35 @@ from SimpleITK import Image
 import SimpleITK as sitk
 import numpy as np
 from segflow4d.common.types.propagation_data_object import PropagationDataObject
-from typing import Optional
 
 
 class ImageWrapper(PropagationDataObject):
-    def __init__(self, image: Optional[Image]):
+    def __init__(self, image: Image | None):
         super().__init__()
         self._data = image
 
-    def get_data(self) -> Optional[Image]:
+    def get_data(self) -> Image | None:
         return self._data
     
-    def set_data(self, data: Optional[Image]):
+    def set_data(self, data: Image | None):
         self._data = data
 
-    def get_origin(self) -> Optional[tuple]:
+    def get_origin(self) -> tuple | None:
         if self._data is None:
             return None
         return self._data.GetOrigin()
     
-    def get_spacing(self) -> Optional[tuple]:
+    def get_spacing(self) -> tuple | None:
         if self._data is None:
             return None
         return self._data.GetSpacing()
     
-    def get_direction(self) -> Optional[tuple]:
+    def get_direction(self) -> tuple | None:
         if self._data is None:
             return None
         return self._data.GetDirection()
     
-    def get_dimensions(self) -> Optional[tuple]:   
+    def get_dimensions(self) -> tuple | None:
         if self._data is None:
             return None
         return self._data.GetSize()

@@ -1,4 +1,3 @@
-from typing import Optional
 import copy
 import numpy as np
 
@@ -16,25 +15,25 @@ class TPData:
     '''
     def __init__(
         self,
-        image: Optional[ImageWrapper] = None,
-        image_low_res: Optional[ImageWrapper] = None,
-        segmentation: Optional[ImageWrapper] = None,
-        segmentation_mesh: Optional[MeshWrapper] = None,
-        mask: Optional[ImageWrapper] = None,
-        mask_low_res: Optional[ImageWrapper] = None,
-        mask_high_res: Optional[ImageWrapper] = None,
-        additional_meshes: Optional[dict[str, MeshWrapper]] = None,
+        image: ImageWrapper | None = None,
+        image_low_res: ImageWrapper | None = None,
+        segmentation: ImageWrapper | None = None,
+        segmentation_mesh: MeshWrapper | None = None,
+        mask: ImageWrapper | None = None,
+        mask_low_res: ImageWrapper | None = None,
+        mask_high_res: ImageWrapper | None = None,
+        additional_meshes: dict[str, MeshWrapper] | None = None,
         # Registration output fields
-        affine_matrix: Optional[np.ndarray] = None,
-        resliced_image: Optional[ImageWrapper] = None,
-        resliced_segmentation_mesh: Optional[MeshWrapper] = None,
-        resliced_meshes: Optional[dict[str, MeshWrapper]] = None,
-        warp_image: Optional[ImageWrapper] = None,
+        affine_matrix: np.ndarray | None = None,
+        resliced_image: ImageWrapper | None = None,
+        resliced_segmentation_mesh: MeshWrapper | None = None,
+        resliced_meshes: dict[str, MeshWrapper] | None = None,
+        warp_image: ImageWrapper | None = None,
         # Transformation fields
-        affine_from_prev: Optional[object] = None,
-        affine_from_ref: Optional[object] = None,
-        deformable_from_ref: Optional[object] = None,
-        deformable_from_ref_low_res: Optional[object] = None
+        affine_from_prev: object | None = None,
+        affine_from_ref: object | None = None,
+        deformable_from_ref: object | None = None,
+        deformable_from_ref_low_res: object | None = None
     ):
         # Core image and segmentation data
         self.image = image

@@ -1,7 +1,7 @@
 import threading
 import queue
 import time
-from typing import Callable, Any, NamedTuple, Optional
+from typing import Callable, Any, NamedTuple
 from segflow4d.common.types.image_wrapper import ImageWrapper
 from segflow4d.common.types.mesh_wrapper import MeshWrapper
 from logging import getLogger
@@ -41,7 +41,7 @@ class _Task(NamedTuple):
 
 class AsyncWriter:
     def __init__(self, max_queue: int = 0):
-        self._q: queue.Queue[Optional[_Task]] = queue.Queue(maxsize=max_queue)
+        self._q: queue.Queue[_Task | None] = queue.Queue(maxsize=max_queue)
         self._t = threading.Thread(target=self._worker, daemon=True)
         self._t.start()
 

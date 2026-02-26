@@ -7,7 +7,7 @@ These functions must be at module level for pickling by ProcessPoolExecutor.
 import gc
 import logging
 import os
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def gpu_worker_init(device_id: int, registration_backend: str):
     logger.info(f"Worker process initialized for GPU {device_id} (PID: {os.getpid()})")
 
 
-def run_registration_job(job_data: Dict) -> Any:
+def run_registration_job(job_data: dict) -> Any:
     """
     Execute a registration job in a worker process.
     

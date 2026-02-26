@@ -16,9 +16,8 @@ Notes:
 - Provide voxel spacing in mm as (sz, sy, sx) matching the spatial axes order of your arrays.
 """
 
-from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import numpy as np
 import SimpleITK as sitk
@@ -38,17 +37,17 @@ class Metrics:
 
 @dataclass
 class ValidationResult:
-    per_label: Dict[int, Metrics]
+    per_label: dict[int, Metrics]
     macro_avg: Metrics
     # optional: label sizes for debugging/weighting
-    ref_voxels: Dict[int, int]
-    target_voxels: Dict[int, int]
+    ref_voxels: dict[int, int]
+    target_voxels: dict[int, int]
 
 
 # ----------------------------
 # Loading helpers
 # ----------------------------
-def load_segmentation(path: str) -> Tuple[np.ndarray, Tuple[float, float, float]]:
+def load_segmentation(path: str) -> tuple[np.ndarray, tuple[float, float, float]]:
     """
     Load a segmentation image using SITK and return:
       - data as numpy array (integer labels) in (Z, Y, X) order
@@ -83,7 +82,7 @@ def load_segmentation(path: str) -> Tuple[np.ndarray, Tuple[float, float, float]
 def _safe_binary_metrics(
     target_bin: np.ndarray,
     ref_bin: np.ndarray,
-    spacing_xyz: Tuple[float, float, float],
+    spacing_xyz: tuple[float, float, float],
 ) -> Metrics:
     """
     Compute Dice, MSD(ASSD), HD95 for one binary label.
@@ -113,8 +112,8 @@ def evaluate_segmentation(
     target: np.ndarray,
     ref: np.ndarray,
     *,
-    spacing: Union[Tuple[float, float, float], Sequence[float]] = (1.0, 1.0, 1.0),
-    labels: Optional[Sequence[int]] = None,
+    spacing: tuple[float, float, float] | Sequence[float] = (1.0, 1.0, 1.0),
+    labels: Sequence[int] | None = None,
     background_label: int = 0,
 ) -> ValidationResult:
     """
@@ -162,9 +161,9 @@ def evaluate_segmentation(
     else:
         labs = [int(x) for x in labels if int(x) != background_label]
 
-    per_label: Dict[int, Metrics] = {}
-    ref_sizes: Dict[int, int] = {}
-    target_sizes: Dict[int, int] = {}
+    per_label: dict[int, Metrics] = {}
+    ref_sizes: dict[int, int] = {}
+    target_sizes: dict[int, int] = {}
 
     # Compute per label
     for lab in labs:

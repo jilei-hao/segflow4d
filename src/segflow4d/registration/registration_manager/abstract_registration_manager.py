@@ -4,7 +4,6 @@ Abstract base class for registration managers.
 
 from abc import ABC, abstractmethod
 from concurrent.futures import Future
-from typing import Dict
 
 
 class AbstractRegistrationManager(ABC):
@@ -45,7 +44,7 @@ class AbstractRegistrationManager(ABC):
         """
         pass
     
-    def get_device_status(self) -> Dict[int, Dict]:
+    def get_device_status(self) -> dict[int, dict]:
         """
         Get status of all devices (GPU only).
         
