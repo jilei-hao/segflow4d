@@ -1,0 +1,9 @@
+{
+  "mean_macro_dice": 0.6041663126209695,
+  "per_tp_dice": [
+    0.637393097018655,
+    0.5709395282232842
+  ],
+  "n_tp": 3,
+  "note": "Baseline generated automatically. Tests will fail if mean_macro_dice drops more than 0.02 below this value."
+}

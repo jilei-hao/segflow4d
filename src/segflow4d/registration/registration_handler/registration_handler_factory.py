@@ -6,7 +6,7 @@ class RegistrationHandlerFactory:
     @staticmethod
     def create_registration_handler(backend) -> 'AbstractRegistrationHandler':
         """Create a new registration handler based on the backend type"""
-        match backend:
+        match backend.lower():
             case 'fireants':
                 from segflow4d.registration.registration_handler.fireants.fireants_registration_handler import FireantsRegistrationHandler
                 return FireantsRegistrationHandler()
