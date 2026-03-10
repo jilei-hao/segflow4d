@@ -72,6 +72,20 @@ def parse_arguments():
     parser.add_argument('--loss-type', type=str, default=None, choices=['mse', 'cc'], help='Similarity metric: mse or cc (cross-correlation)')
     parser.add_argument('--cc-kernel-size', type=int, default=None, help='Kernel size for cross-correlation loss (used when --loss-type=cc)')
 
+    # Greedy-specific options (picsl-greedy backend)
+    parser.add_argument('--metric', type=str, default=None, choices=['NCC', 'SSD', 'NMI'],
+                        help='Similarity metric for greedy backend: NCC, SSD, or NMI')
+    parser.add_argument('--metric-radius', type=int, nargs='+', default=None,
+                        help='Patch radius for NCC metric, one value per image dimension (e.g. --metric-radius 2 2 2)')
+    parser.add_argument('--affine-dof', type=int, default=None,
+                        help='Degrees of freedom for greedy affine stage: 6 (rigid), 7 (similarity), 12 (full affine)')
+    parser.add_argument('--smooth-sigma-pre-mm', type=float, default=None,
+                        help='Pre-smoothing sigma for greedy gradient fields in mm (default: 2.0)')
+    parser.add_argument('--smooth-sigma-post-mm', type=float, default=None,
+                        help='Post-smoothing sigma for greedy warp fields in mm (default: 0.5)')
+    parser.add_argument('--threads', type=int, default=None,
+                        help='Number of CPU threads for greedy (default: all cores)')
+
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
@@ -167,6 +181,19 @@ def main():
             cli_backend_options['loss_type'] = args.loss_type
         if args.cc_kernel_size is not None:
             cli_backend_options['cc_kernel_size'] = args.cc_kernel_size
+        # Greedy-specific options
+        if args.metric is not None:
+            cli_backend_options['metric'] = args.metric
+        if args.metric_radius is not None:
+            cli_backend_options['metric_radius'] = args.metric_radius
+        if args.affine_dof is not None:
+            cli_backend_options['affine_dof'] = args.affine_dof
+        if args.smooth_sigma_pre_mm is not None:
+            cli_backend_options['smooth_sigma_pre_mm'] = args.smooth_sigma_pre_mm
+        if args.smooth_sigma_post_mm is not None:
+            cli_backend_options['smooth_sigma_post_mm'] = args.smooth_sigma_post_mm
+        if args.threads is not None:
+            cli_backend_options['threads'] = args.threads
 
         input_factory.set_options(
             lowres_factor=args.lowres_factor,

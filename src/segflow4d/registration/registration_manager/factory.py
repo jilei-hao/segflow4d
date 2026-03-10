@@ -13,14 +13,27 @@ from segflow4d.registration.registration_manager.gpu_registration_manager import
 
 logger = logging.getLogger(__name__)
 
+# Backends that are CPU-only and must always use CPURegistrationManager,
+# regardless of whether a GPU is present.  Add new CPU-only backends here
+# (e.g. 'elastix', 'ants') as they are integrated.
+_CPU_ONLY_BACKENDS: frozenset[str] = frozenset({'greedy'})
+
 
 class RegistrationManagerFactory:
     """
     Factory for creating the appropriate registration manager.
-    
-    Automatically selects GPU or CPU manager based on hardware availability.
+
+    Manager selection follows this priority order:
+    1. If ``force_cpu`` is ``True`` → :class:`CPURegistrationManager` (explicit override).
+    2. If the backend is CPU-only (currently ``'greedy'``) → :class:`CPURegistrationManager`.
+    3. If CUDA is available → :class:`GPURegistrationManager`.
+    4. Otherwise → :class:`CPURegistrationManager` (fallback).
+
+    This means that adding a new CPU-based backend (ITK Elastix, ANTs, etc.)
+    only requires updating :data:`_CPU_ONLY_BACKENDS` and implementing the
+    handler — no other changes are needed.
     """
-    
+
     @staticmethod
     def create(registration_backend: str,
                max_workers: int | None = None,
@@ -30,36 +43,48 @@ class RegistrationManagerFactory:
                use_persistent_workers: bool = False,
                force_cpu: bool = False) -> AbstractRegistrationManager:
         """
-        Create a registration manager based on available hardware.
-        
+        Create a registration manager based on the backend type and hardware.
+
         Args:
-            registration_backend: Backend to use ('fireants', 'greedy', etc.)
-            max_workers: Maximum concurrent workers.
-            required_vram_mb: Required VRAM per job (GPU only).
-            vram_check_interval: VRAM check interval in seconds (GPU only).
-            use_processes: Use process-based GPU execution (recommended).
-            use_persistent_workers: Use persistent worker processes (GPU only).
-            force_cpu: Force CPU even if GPU is available.
-            
+            registration_backend: Backend key (e.g. ``'fireants'``, ``'greedy'``).
+            max_workers: Maximum concurrent workers (processes for CPU, GPU slots for GPU).
+            required_vram_mb: Required VRAM per job; GPU manager only.
+            vram_check_interval: VRAM polling interval in seconds; GPU manager only.
+            use_processes: Use subprocess-based GPU workers (recommended, avoids CUDA
+                context conflicts between jobs).
+            use_persistent_workers: Keep GPU worker processes alive between jobs.
+            force_cpu: Force CPU manager even if GPU is available and backend supports GPU.
+
         Returns:
-            Appropriate registration manager instance.
+            An :class:`AbstractRegistrationManager` appropriate for the backend and hardware.
         """
-        if not force_cpu and torch.cuda.is_available():
-            logger.info("Creating GPU registration manager")
-            return GPURegistrationManager(
-                registration_backend=registration_backend,
-                max_workers=max_workers,
-                required_vram_mb=required_vram_mb,
-                vram_check_interval=vram_check_interval,
-                use_processes=use_processes,
-                use_persistent_workers=use_persistent_workers
+        use_cpu = (
+            force_cpu
+            or registration_backend.lower() in _CPU_ONLY_BACKENDS
+            or not torch.cuda.is_available()
+        )
+
+        if use_cpu:
+            reason = (
+                "force_cpu flag" if force_cpu
+                else f"'{registration_backend}' is a CPU-only backend" if registration_backend.lower() in _CPU_ONLY_BACKENDS
+                else "no CUDA device available"
             )
-        else:
-            logger.info("Creating CPU registration manager")
+            logger.info(f"Creating CPU registration manager ({reason})")
             return CPURegistrationManager(
                 registration_backend=registration_backend,
-                max_workers=max_workers
+                max_workers=max_workers,
             )
+
+        logger.info(f"Creating GPU registration manager for backend '{registration_backend}'")
+        return GPURegistrationManager(
+            registration_backend=registration_backend,
+            max_workers=max_workers,
+            required_vram_mb=required_vram_mb,
+            vram_check_interval=vram_check_interval,
+            use_processes=use_processes,
+            use_persistent_workers=use_persistent_workers,
+        )
 
 
 class RegistrationManager:

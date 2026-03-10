@@ -8,25 +8,45 @@ Given one or more segmented reference time points, SegFlow4D registers every tar
 
 ## Requirements
 
+### GPU Installation (FireANTs backend)
+
 | Requirement | Version |
 |---|---|
 | Python | ≥ 3.10 |
 | CUDA toolkit (`nvcc`) | ≥ 11.8 (must match PyTorch CUDA build) |
-| PyTorch | ≥ 1.8 (GPU build recommended) |
+| PyTorch | ≥ 1.8 (GPU build) |
 | Conda / Miniconda | any recent version |
+
+### CPU Installation (Greedy backend)
+
+| Requirement | Version |
+|---|---|
+| Python | ≥ 3.10 |
+| Conda / Miniconda | any recent version |
+
+No GPU or CUDA toolkit required. Registration runs on CPU via `picsl-greedy`.
 
 ---
 
 ## Setup
 
-### 1. Create a conda environment
+Choose the installation track that matches your hardware:
+
+- **[GPU Installation](#gpu-installation-fireants-backend-1)** — CUDA-capable GPU required; faster registration using FireANTs
+- **[CPU Installation](#cpu-installation-greedy-backend-1)** — no GPU required; simpler setup using the Greedy backend
+
+---
+
+### GPU Installation (FireANTs backend)
+
+#### 1. Create a conda environment
 
 ```bash
 conda create -n segflow4d python=3.10
 conda activate segflow4d
 ```
 
-### 2. Install PyTorch (GPU) — do this first
+#### 2. Install PyTorch (GPU) — do this first
 
 PyPI only distributes CPU-only PyTorch wheels. If you let FireANTs or segflow4d
 pull in `torch` as a dependency automatically, you will get a CPU build.
@@ -92,7 +112,7 @@ pip install torch torchvision \
 > For a permanent fix, ask your IT team for the corporate CA certificate and run:
 > `pip config set global.cert /path/to/ca-bundle.pem`
 
-### 3. Install FireANTs with fused CUDA ops
+#### 3. Install FireANTs with fused CUDA ops
 
 The fused CUDA operations are required for best performance. Run the provided setup script:
 
@@ -110,7 +130,7 @@ This will:
 > `cuda-toolkit` into the active conda environment via `conda install -c nvidia`.
 > No manual toolkit management is needed in most cases.
 
-### 4. Install SegFlow4D
+#### 4. Install SegFlow4D
 
 ```bash
 pip install -e .
@@ -129,6 +149,33 @@ listed in `pyproject.toml` are installed automatically.
 > rm -rf "$SITE"/{common,processing,propagation,registration,utility}
 > pip install -e .
 > ```
+
+---
+
+### CPU Installation (Greedy backend)
+
+No GPU or CUDA toolkit required. Uses [picsl-greedy](https://pypi.org/project/picsl-greedy/) for CPU-based deformable registration.
+
+#### 1. Create a conda environment
+
+```bash
+conda create -n segflow4d python=3.10
+conda activate segflow4d
+```
+
+#### 2. Install SegFlow4D with the Greedy extra
+
+```bash
+pip install -e ".[greedy]"
+```
+
+This installs `segflow4d` along with `picsl-greedy` and all other required
+dependencies. PyTorch is pulled in automatically as a CPU build — no manual
+PyTorch installation step is needed.
+
+> **Note:** Registration will run entirely on CPU. Expect longer runtimes
+> compared to the GPU (FireANTs) backend. Set `registration_backend: greedy`
+> in your config file (see Configuration below).
 
 ---
 
