@@ -175,6 +175,7 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         itk_fixed = img_fixed.get_data()
         itk_moving = img_moving.get_data()
         itk_to_reslice = img_to_reslice.get_data()
+        reslice_pixel_id: int = img_to_reslice.get_data().GetPixelID()  # type: ignore[union-attr]
 
         common_flags = self._build_common_flags(opts)
         metric_str = opts.metric_flag()
@@ -189,26 +190,31 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             itk_mask_cast = sitk.Cast(itk_mask_moving, sitk.sitkFloat32)
             itk_moving = sitk.Multiply(sitk.Cast(itk_moving, sitk.sitkFloat32), itk_mask_cast)
 
+        # Reuse a single Greedy3D instance across all stages so that cached
+        # ITK transform objects (e.g. my_affine) retain the correct ITK type
+        # when referenced by subsequent commands via -it / -r flags.
+        g = Greedy3D()
+
         # ----------------------------------------------------------------
         # Stage 1: Affine registration
         # ----------------------------------------------------------------
         logger.info("Starting greedy affine registration ...")
         t0 = time()
 
-        g_affine = Greedy3D()
         affine_cmd = (
             f"-i my_fixed my_moving "
             f"-a -dof {opts.affine_dof} "
             f"-n {opts.affine_schedule()} "
             f"-m {metric_str} "
+            f"-jitter {opts.jitter} "
             f"-o my_affine "
             f"{common_flags}"
         ).strip()
 
         logger.debug(f"Greedy affine command: {affine_cmd}")
-        g_affine.execute(affine_cmd, my_fixed=itk_fixed, my_moving=itk_moving, my_affine=None)
+        g.execute(affine_cmd, my_fixed=itk_fixed, my_moving=itk_moving, my_affine=None)
 
-        affine_matrix: np.ndarray = g_affine['my_affine']
+        affine_matrix: np.ndarray = g['my_affine']
         logger.info(f"Affine registration completed in {time() - t0:.2f}s")
 
         # ----------------------------------------------------------------
@@ -217,7 +223,6 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         logger.info("Starting greedy deformable registration ...")
         t1 = time()
 
-        g_deform = Greedy3D()
         deform_cmd = (
             f"-i my_fixed my_moving "
             f"-it my_affine "
@@ -229,15 +234,9 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         ).strip()
 
         logger.debug(f"Greedy deformable command: {deform_cmd}")
-        g_deform.execute(
-            deform_cmd,
-            my_fixed=itk_fixed,
-            my_moving=itk_moving,
-            my_affine=affine_matrix,
-            my_warp=None,
-        )
+        g.execute(deform_cmd, my_fixed=itk_fixed, my_moving=itk_moving, my_warp=None)
 
-        warp_field_sitk: sitk.Image = g_deform['my_warp']
+        warp_field_sitk: sitk.Image = g['my_warp']
         logger.info(f"Deformable registration completed in {time() - t1:.2f}s")
 
         # ----------------------------------------------------------------
@@ -246,7 +245,6 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         logger.info("Reslicing segmentation ...")
         t2 = time()
 
-        g_reslice = Greedy3D()
         reslice_cmd = (
             f"-rf my_fixed "
             f"-rm my_seg my_resliced "
@@ -256,16 +254,14 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         ).strip()
 
         logger.debug(f"Greedy reslice command: {reslice_cmd}")
-        g_reslice.execute(
-            reslice_cmd,
-            my_fixed=itk_fixed,
-            my_seg=itk_to_reslice,
-            my_resliced=None,
-            my_warp=warp_field_sitk,
-            my_affine=affine_matrix,
-        )
+        g.execute(reslice_cmd, my_fixed=itk_fixed, my_seg=itk_to_reslice, my_resliced=None)
 
-        resliced_sitk: sitk.Image = g_reslice['my_resliced']
+        resliced_sitk: sitk.Image = g['my_resliced']
+        # Greedy LABEL reslice may return a different pixel type (e.g. float64).
+        # Cast back to the original segmentation pixel type so downstream
+        # JoinSeriesImageFilter calls don't fail on type mismatches.
+        if resliced_sitk.GetPixelID() != reslice_pixel_id:
+            resliced_sitk = sitk.Cast(resliced_sitk, reslice_pixel_id)
         resliced_image = ImageWrapper(resliced_sitk)
         logger.info(f"Segmentation reslicing completed in {time() - t2:.2f}s")
 

@@ -7,6 +7,14 @@ All fixtures here are CPU-only and have no GPU dependency.
 import numpy as np
 import pytest
 import SimpleITK as sitk
+import torch
+
+
+def pytest_runtest_setup(item):
+    """Auto-skip tests marked 'gpu' when CUDA is not available."""
+    if any(item.iter_markers(name="gpu")):
+        if not torch.cuda.is_available():
+            pytest.skip("requires a CUDA-capable GPU")
 
 from segflow4d.common.types.image_wrapper import ImageWrapper
 from segflow4d.common.types.mesh_wrapper import MeshWrapper

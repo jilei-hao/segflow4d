@@ -26,6 +26,10 @@ class GreedyRegistrationOptions(AbstractRegistrationOptions):
             Passed to greedy as the first argument of the -s flag.
         smooth_sigma_post_mm: Post-smoothing Gaussian sigma applied to warp fields (mm).
             Passed to greedy as the second argument of the -s flag.
+        jitter: Half-range of the uniform random jitter applied to voxel sample locations
+            during affine registration (``-jitter`` flag).  Randomising sample positions
+            avoids spurious local minima and generally improves convergence.
+            Greedy's built-in default is 0.5; set to 0.0 to disable.
         threads: Number of CPU threads for greedy to use.
             None means greedy will use all available cores.
         verbosity: Greedy verbosity level (0 = silent, 1 = normal, 2 = verbose).
@@ -38,6 +42,7 @@ class GreedyRegistrationOptions(AbstractRegistrationOptions):
     deformable_iterations: list[int] = field(default_factory=lambda: [200, 100, 25])
     smooth_sigma_pre_mm: float = 2.0
     smooth_sigma_post_mm: float = 0.5
+    jitter: float = 0.5
     threads: int | None = None
     verbosity: int = 0
 
@@ -59,6 +64,9 @@ class GreedyRegistrationOptions(AbstractRegistrationOptions):
 
         if self.smooth_sigma_post_mm < 0:
             raise ValueError("smooth_sigma_post_mm must be non-negative")
+
+        if self.jitter < 0:
+            raise ValueError("jitter must be non-negative")
 
         if self.threads is not None and self.threads < 1:
             raise ValueError("threads must be a positive integer or None")

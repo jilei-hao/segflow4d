@@ -157,6 +157,18 @@ class TestGreedyRegistrationOptions:
         opts = GreedyRegistrationOptions(metric="NMI")
         assert opts.metric_flag() == "NMI"
 
+    def test_jitter_default_is_0_5(self):
+        opts = GreedyRegistrationOptions()
+        assert opts.jitter == 0.5
+
+    def test_jitter_zero_accepted(self):
+        opts = GreedyRegistrationOptions(jitter=0.0)
+        assert opts.jitter == 0.0
+
+    def test_negative_jitter_raises(self):
+        with pytest.raises(ValueError, match="jitter"):
+            GreedyRegistrationOptions(jitter=-0.1)
+
 
 # ---------------------------------------------------------------------------
 # GreedyRegistrationHandler._resolve_options — no external deps needed
@@ -341,12 +353,21 @@ class TestGreedyHandlerRegistration:
         img = ImageWrapper(_make_sitk_sphere(shape=shape))
         seg = ImageWrapper(seg_sitk)
 
+        # Use enough iterations and small smoothing so the optimizer converges
+        # to the identity transform on these tiny synthetic volumes.
+        identity_opts = GreedyRegistrationOptions(
+            affine_iterations=[100, 50],
+            deformable_iterations=[50, 25],
+            smooth_sigma_pre_mm=0.5,
+            smooth_sigma_post_mm=0.1,
+            jitter=0.0,           # disable for deterministic test results
+        )
         result = handler.run_registration_and_reslice(
             img_fixed=img,
             img_moving=img,
             img_to_reslice=seg,
             mesh_to_reslice=None,
-            options=_minimal_prop_opts(),
+            options=_minimal_prop_opts(identity_opts),
         )
 
         pred = sitk.GetArrayFromImage(result.resliced_image.get_data()).astype(np.int32)
