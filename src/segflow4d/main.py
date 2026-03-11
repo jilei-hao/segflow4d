@@ -145,9 +145,9 @@ def main():
             tp_targets = group.get('tp_targets', [])
             seg_ref = group.get('seg_ref')
             additional_meshes = group.get('additional_meshes', {})
-            
+
             logger.info(f"Adding tp_input_group with tp_ref={tp_ref}, tp_targets={tp_targets}")
-            
+
             input_factory.add_tp_input_group_from_disk(
                 tp_ref=tp_ref,
                 tp_target=tp_targets,

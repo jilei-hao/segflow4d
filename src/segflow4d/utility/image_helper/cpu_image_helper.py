@@ -83,7 +83,7 @@ class CPUImageHelper(AbstractImageHelper):
             raise ValueError("Input 4D image data is None.")
         size = list(image_data.GetSize())
         size[3] = 0  # Collapse the 4th dimension to extract a single 3-D volume
-        index = [0, 0, 0, timepoint]  # timepoint is 0-based index
+        index = [0, 0, 0, timepoint - 1]  # timepoint is 1-based; convert to 0-based for ITK
         extractor.SetSize(size)
         extractor.SetIndex(index)
         return ImageWrapper(extractor.Execute(image_data))
