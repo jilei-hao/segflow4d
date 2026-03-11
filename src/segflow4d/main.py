@@ -1,4 +1,5 @@
 import os
+import signal
 import sys
 import logging
 from segflow4d.propagation.propagation_pipeline import PropagationPipeline
@@ -106,6 +107,26 @@ def load_config(config_path):
         config = yaml.safe_load(f)
     return config
 
+def _install_signal_handlers():
+    """Register SIGTERM/SIGINT handlers to kill all worker subprocesses on exit."""
+    from segflow4d.registration.registration_manager import RegistrationManager
+
+    def _handler(signum, frame):
+        logger.warning(f"Received signal {signum}, shutting down all workers...")
+        try:
+            RegistrationManager.get_instance().shutdown(wait=False)
+        except Exception:
+            pass
+        try:
+            async_writer.shutdown(wait=False)
+        except Exception:
+            pass
+        os._exit(1)
+
+    signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGINT, _handler)
+
+
 def main():
     args = parse_arguments()
     
@@ -209,6 +230,8 @@ def main():
 
     propagation_input = input_factory.build()
     pipeline = PropagationPipeline(propagation_input)
+
+    _install_signal_handlers()
 
     logger.info("Starting SegFlow4D Propagation Pipeline")
     pipeline.run()

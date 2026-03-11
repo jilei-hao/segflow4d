@@ -16,14 +16,14 @@ registration_backend_options:
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:
-  - tp_ref: 0
-    tp_targets: [1, 2, 3]
-    seg_ref: /path/to/seg_ref_tp0.tif
+  - tp_ref: 1
+    tp_targets: [2, 3, 4]
+    seg_ref: /path/to/seg_ref_tp1.tif
     additional_meshes:
-      mesh1: /path/to/mesh1_tp0.obj
-      mesh2: /path/to/mesh2_tp0.obj
+      mesh1: /path/to/mesh1_tp1.obj
+      mesh2: /path/to/mesh2_tp1.obj
   - tp_ref: 5
-    tp_targets: [4, 6, 7]
+    tp_targets: [6, 7, 8]
     seg_ref: /path/to/seg_ref_tp5.tif
     additional_meshes:
       mesh1: /path/to/mesh1_tp5.obj

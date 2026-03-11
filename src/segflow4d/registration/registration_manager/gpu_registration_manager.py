@@ -479,11 +479,19 @@ class ProcessJobDispatcher:
         logger.info("ProcessJobDispatcher shutting down...")
         self._running = False
         self._dispatcher_thread.join(timeout=5.0)
-        
+
         if wait:
             self._job_queue.join()
-        
-        self._executor.shutdown(wait=wait)
+            self._executor.shutdown(wait=True)
+        else:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            # Terminate any worker processes that are still running
+            for proc in self._executor._processes.values():
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
         self._future_manager.shutdown(wait=wait)
         logger.info("ProcessJobDispatcher shutdown complete")
 
@@ -689,13 +697,20 @@ class PersistentProcessJobDispatcher:
     def shutdown(self, wait: bool = True):
         """Shutdown all workers."""
         self._running = False
-        
-        for device_id, job_queue in self._job_queues.items():
-            job_queue.put(None)
-        
+
         if wait:
+            for job_queue in self._job_queues.values():
+                job_queue.put(None)
             for worker in self._workers.values():
                 worker.join(timeout=5.0)
+        else:
+            # Terminate worker processes immediately
+            for worker in self._workers.values():
+                try:
+                    if worker.is_alive():
+                        worker.terminate()
+                except Exception:
+                    pass
 
 
 class GPURegistrationManager(AbstractRegistrationManager):

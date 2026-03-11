@@ -100,5 +100,14 @@ class CPURegistrationManager(AbstractRegistrationManager):
     def shutdown(self, wait: bool = True) -> None:
         """Shutdown the process pool."""
         logger.info("CPURegistrationManager shutting down...")
-        self._executor.shutdown(wait=wait)
+        if wait:
+            self._executor.shutdown(wait=True)
+        else:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            # Terminate any worker processes that are still running
+            for proc in self._executor._processes.values():
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
         logger.info("CPURegistrationManager shutdown complete")
