@@ -16,6 +16,20 @@ def pytest_runtest_setup(item):
         if not torch.cuda.is_available():
             pytest.skip("requires a CUDA-capable GPU")
 
+
+@pytest.fixture(autouse=True)
+def reset_registration_manager():
+    """Reset the RegistrationManager singleton before and after every test.
+
+    The RegistrationManager is a global singleton; without this reset a test
+    that initialises it with FireANTS would corrupt all subsequent tests that
+    expect a different backend (e.g. Greedy).
+    """
+    from segflow4d.registration.registration_manager.factory import RegistrationManager
+    RegistrationManager.reset()
+    yield
+    RegistrationManager.reset()
+
 from segflow4d.common.types.image_wrapper import ImageWrapper
 from segflow4d.common.types.mesh_wrapper import MeshWrapper
 

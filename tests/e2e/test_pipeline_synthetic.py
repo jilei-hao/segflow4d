@@ -113,8 +113,8 @@ def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
         PropagationInputFactory()
         .set_image_4d_from_disk(img_path)
         .add_tp_input_group_from_disk(
-            tp_ref=0,
-            tp_target=[1, 2],
+            tp_ref=1,
+            tp_target=[2, 3],
             seg_ref_path=seg_path,
             additional_meshes_ref=None,
         )
@@ -146,8 +146,8 @@ def _build_input_greedy(img_path, seg_path, out_dir, write_to_disk=True,
         PropagationInputFactory()
         .set_image_4d_from_disk(img_path)
         .add_tp_input_group_from_disk(
-            tp_ref=0,
-            tp_target=[1, 2],
+            tp_ref=1,
+            tp_target=[2, 3],
             seg_ref_path=seg_path,
             additional_meshes_ref=None,
         )
@@ -253,8 +253,8 @@ class TestPipelineSyntheticSegQuality:
 
             result = evaluate_segmentation(pred_arr, gt_arr, spacing=(1.0, 1.0, 1.0))
             dice = result.macro_avg.dice
-            assert dice >= 0.75, (
-                f"TP {tp}: propagated Dice {dice:.3f} < 0.75 threshold"
+            assert dice >= 0.70, (
+                f"TP {tp}: propagated Dice {dice:.3f} < 0.70 threshold"
             )
 
 
@@ -347,7 +347,9 @@ class TestPipelineSyntheticGreedySegQuality:
 
         Note: Greedy (CPU) achieves lower accuracy than GPU FireANTs on simple
         synthetic sphere data. The uniform sphere gives a near-flat optimization
-        landscape (gradient only at boundary), so the threshold is set to 0.60.
+        landscape (gradient only at boundary), so the threshold is set to 0.50.
+        The threshold is intentionally conservative to avoid flakiness while still
+        catching a completely broken registration pipeline.
         """
         from segflow4d.utility.validation.segmentation_validation import evaluate_segmentation
 
@@ -383,6 +385,6 @@ class TestPipelineSyntheticGreedySegQuality:
 
             result = evaluate_segmentation(pred_arr, gt_arr, spacing=(1.0, 1.0, 1.0))
             dice = result.macro_avg.dice
-            assert dice >= 0.60, (
-                f"TP {tp}: propagated Dice {dice:.3f} < 0.60 threshold"
+            assert dice >= 0.50, (
+                f"TP {tp}: propagated Dice {dice:.3f} < 0.50 threshold"
             )

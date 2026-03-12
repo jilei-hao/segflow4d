@@ -90,8 +90,8 @@ def tp_partition_input(seg_ref_3d):
     return TPPartitionInput(
         seg_ref=seg_ref_3d,
         additional_meshes_ref=None,
-        tp_ref=0,
-        tp_target=[1, 2, 3, 4],
+        tp_ref=1,
+        tp_target=[2, 3, 4, 5],
     )
 
 
@@ -112,7 +112,7 @@ class TestTPPartitionInitialisation:
 
     def test_tp_data_keys_match_expected_timepoints(self, tp_partition_input, image_4d_5tp, options):
         partition = TPPartition(tp_partition_input, image_4d_5tp, options)
-        assert set(partition._tp_data.keys()) == {0, 1, 2, 3, 4}
+        assert set(partition._tp_data.keys()) == {1, 2, 3, 4, 5}
 
     def test_all_tp_data_have_image(self, tp_partition_input, image_4d_5tp, options):
         partition = TPPartition(tp_partition_input, image_4d_5tp, options)
