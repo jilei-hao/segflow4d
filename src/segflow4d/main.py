@@ -91,6 +91,9 @@ def parse_arguments():
     parser.add_argument('--label-interpolation', type=str, default=None,
                         help='Smoothing parameter for greedy LABEL reslice interpolation, e.g. "0.2vox" or "0.5mm" (default: 0.2vox)')
 
+    parser.add_argument('--propagation-strategy-combo', type=str, default='sequential_star',
+                        choices=['sequential_star', 'sasd_star'],
+                        help='Strategy combo for lowres+highres stages (default: sequential_star)')
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
@@ -155,6 +158,7 @@ def main():
             debug=config.get('debug', False),
             debug_output_directory=config.get('debug_dir', ''),
             minimum_required_vram_gb=config.get('minimum_required_vram_gb', 0),
+            propagation_strategy_combo=config.get('propagation_strategy_combo', 'sequential_star'),
             **backend_options
         )
         
@@ -233,6 +237,7 @@ def main():
             output_directory=args.output,
             debug=args.debug,
             debug_output_directory=args.debug_dir,
+            propagation_strategy_combo=args.propagation_strategy_combo,
             **cli_backend_options
         )
 

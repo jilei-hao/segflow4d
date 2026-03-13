@@ -12,6 +12,8 @@ Install the dependency::
 """
 
 import logging
+import os
+import tempfile
 from time import time
 
 import SimpleITK as sitk
@@ -121,6 +123,172 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             "GreedyRegistrationHandler does not support run_reslice_mesh() in isolation. "
             "Use run_registration_and_reslice() instead."
         )
+
+
+    def run_affine_only(
+        self,
+        img_fixed: ImageWrapper,
+        img_moving: ImageWrapper,
+        options: PropagationOptions,
+        mask_fixed: ImageWrapper | None = None,
+        mask_moving: ImageWrapper | None = None,
+    ) -> TPData:
+        """Run only the affine registration stage and return the affine matrix."""
+        Greedy3D = self._import_greedy()
+        opts = self._resolve_options(options)
+
+        itk_fixed = img_fixed.get_data()
+        itk_moving = img_moving.get_data()
+        common_flags = self._build_common_flags(opts)
+        metric_str = opts.metric_flag()
+        itk_mask_fixed = mask_fixed.get_data() if mask_fixed is not None else None
+
+        g = Greedy3D()
+        logger.info("Starting greedy affine-only registration ...")
+        t0 = time()
+
+        affine_cmd = (
+            f"-i my_fixed my_moving "
+            f"-a -dof {opts.affine_dof} "
+            f"-n {opts.affine_schedule()} "
+            f"-m {metric_str} "
+            f"-jitter {opts.jitter} "
+            f"{'-gm my_mask_fixed ' if itk_mask_fixed is not None else ''}"
+            f"-o my_affine "
+            f"{common_flags}"
+        ).strip()
+
+        affine_kwargs = dict(my_fixed=itk_fixed, my_moving=itk_moving, my_affine=None)
+        if itk_mask_fixed is not None:
+            affine_kwargs["my_mask_fixed"] = itk_mask_fixed
+        g.execute(affine_cmd, **affine_kwargs)
+
+        affine_matrix = g["my_affine"]
+        logger.info(f"Affine-only registration completed in {time() - t0:.2f}s")
+        return TPData(affine_matrix=affine_matrix)
+
+    def run_deformable_and_reslice(
+        self,
+        img_fixed: ImageWrapper,
+        img_moving: ImageWrapper,
+        img_to_reslice: ImageWrapper,
+        mesh_to_reslice: MeshWrapper | None,
+        options: PropagationOptions,
+        init_affine_matrix=None,
+        mask_fixed: ImageWrapper | None = None,
+        mask_moving: ImageWrapper | None = None,
+    ) -> TPData:
+        """Run deformable registration (optionally initialized with a 4x4 numpy affine) and reslice.
+
+        Parameters
+        ----------
+        init_affine_matrix:
+            Optional 4x4 numpy array (homogeneous transform matrix from moving to
+            fixed space). If provided, it is loaded into the Greedy3D context as
+            my_affine and used to initialize the deformable stage via -it my_affine.
+            If None, deformable runs without an affine initializer.
+        """
+        Greedy3D = self._import_greedy()
+        opts = self._resolve_options(options)
+
+        itk_fixed = img_fixed.get_data()
+        itk_moving = img_moving.get_data()
+        itk_to_reslice = img_to_reslice.get_data()
+        reslice_pixel_id: int = itk_to_reslice.GetPixelID()
+
+        common_flags = self._build_common_flags(opts)
+        metric_str = opts.metric_flag()
+        itk_mask_fixed = mask_fixed.get_data() if mask_fixed is not None else None
+
+        g = Greedy3D()
+
+        # Write the composed affine to a temp file so greedy can read it via -it.
+        # picsl_greedy's Greedy3D cache only accepts ITK-typed objects for affines;
+        # passing a numpy array raises a cast error.  Writing an ITK AffineTransform
+        # to a .txt file and using its path works reliably.
+        has_init_affine = init_affine_matrix is not None
+        affine_file: str | None = None
+        try:
+            if has_init_affine:
+                itk_affine = sitk.AffineTransform(3)
+                itk_affine.SetMatrix(init_affine_matrix[:3, :3].flatten().tolist())
+                itk_affine.SetTranslation(init_affine_matrix[:3, 3].tolist())
+                fd, affine_file = tempfile.mkstemp(suffix=".txt")
+                os.close(fd)
+                sitk.WriteTransform(itk_affine, affine_file)
+                logger.debug(f"Written composed init_affine to temp file: {affine_file}")
+
+            # ----------------------------------------------------------------
+            # Deformable registration
+            # ----------------------------------------------------------------
+            logger.info("Starting greedy deformable registration (deformable_and_reslice) ...")
+            t1 = time()
+
+            deform_cmd = (
+                f"-i my_fixed my_moving "
+                f"{f'-it {affine_file} ' if has_init_affine else ''}"
+                f"-n {opts.deformable_schedule()} "
+                f"-m {metric_str} "
+                f"-s {opts.smooth_sigma_pre_mm}mm {opts.smooth_sigma_post_mm}mm "
+                f"{'-gm my_mask_fixed ' if itk_mask_fixed is not None else ''}"
+                f"-o my_warp "
+                f"{common_flags}"
+            ).strip()
+
+            deform_kwargs = dict(my_fixed=itk_fixed, my_moving=itk_moving, my_warp=None)
+            if itk_mask_fixed is not None:
+                deform_kwargs["my_mask_fixed"] = itk_mask_fixed
+            g.execute(deform_cmd, **deform_kwargs)
+
+            warp_field_sitk: sitk.Image = g["my_warp"]
+            logger.info(f"Deformable registration completed in {time() - t1:.2f}s")
+
+            # ----------------------------------------------------------------
+            # Reslice segmentation label map
+            # ----------------------------------------------------------------
+            logger.info("Reslicing segmentation ...")
+            t2 = time()
+
+            reslice_transforms = f"my_warp {affine_file}" if has_init_affine else "my_warp"
+            reslice_cmd = (
+                f"-rf my_fixed "
+                f"-ri LABEL {opts.label_interpolation} "
+                f"-rm my_seg my_resliced "
+                f"-r {reslice_transforms} "
+                f"{common_flags}"
+            ).strip()
+
+            g.execute(reslice_cmd, my_fixed=itk_fixed, my_seg=itk_to_reslice, my_resliced=None)
+
+            resliced_sitk: sitk.Image = g["my_resliced"]
+            if resliced_sitk.GetPixelID() != reslice_pixel_id:
+                resliced_sitk = sitk.Cast(resliced_sitk, reslice_pixel_id)
+            resliced_image = ImageWrapper(resliced_sitk)
+            logger.info(f"Segmentation reslicing completed in {time() - t2:.2f}s")
+
+            # ----------------------------------------------------------------
+            # Warp mesh (optional)
+            # ----------------------------------------------------------------
+            resliced_mesh: MeshWrapper | None = None
+            if mesh_to_reslice is not None:
+                logger.info("Warping mesh vertices on CPU ...")
+                t3 = time()
+                resliced_mesh = warp_mesh_vertices_cpu(
+                    mesh_wrapper=mesh_to_reslice,
+                    warp_field_sitk=warp_field_sitk,
+                    img_fixed_sitk=itk_fixed,
+                )
+                logger.info(f"Mesh warping completed in {time() - t3:.2f}s")
+
+            return TPData(
+                resliced_image=resliced_image,
+                resliced_segmentation_mesh=resliced_mesh,
+                warp_image=ImageWrapper(warp_field_sitk),
+            )
+
+        finally:
+            if affine_file is not None and os.path.exists(affine_file):
+                os.unlink(affine_file)
 
     # ------------------------------------------------------------------
     # Main registration entry point

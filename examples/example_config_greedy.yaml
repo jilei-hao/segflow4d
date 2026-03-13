@@ -5,6 +5,7 @@ lowres_factor: 0.5
 dilation_radius: 2
 registration_backend: greedy
 minimum_required_vram_gb: 10
+propagation_strategy_combo: sequential_star # options: sequential_star, sasd_star
 registration_backend_options:
   metric: SSD
   affine_dof: 6

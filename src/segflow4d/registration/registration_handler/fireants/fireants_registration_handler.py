@@ -38,6 +38,221 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
     def run_affine(self, img_fixed, img_moving, options):
         pass
 
+    def run_affine_only(self, img_fixed, img_moving, options: PropagationOptions, mask_fixed=None, mask_moving=None) -> TPData:
+        """Run only the affine registration stage and return the affine matrix."""
+        device_id = torch.cuda.current_device()
+        device_str = f"cuda:{device_id}"
+        torch.cuda.set_device(device_id)
+
+        if isinstance(options, dict):
+            backend_options_dict = options.get('registration_backend_options', {})
+            backend_options = FireantsRegistrationOptions(**backend_options_dict) if isinstance(backend_options_dict, dict) else backend_options_dict
+        else:
+            backend_options = options.registration_backend_options
+            if isinstance(backend_options, dict):
+                backend_options = FireantsRegistrationOptions(**backend_options)
+
+        if not isinstance(backend_options, FireantsRegistrationOptions):
+            raise ValueError("Expected FireantsRegistrationOptions for FireantsRegistrationHandler")
+
+        scales = backend_options.scales
+        affine_iterations = backend_options.affine_iterations
+        affine_lr = backend_options.affine_lr
+        loss_type = backend_options.loss_type
+        cc_kernel_size = backend_options.cc_kernel_size
+        loss_kwargs = {}
+        if loss_type == 'cc':
+            loss_kwargs['cc_kernel_size'] = cc_kernel_size
+
+        try:
+            itk_fixed = img_fixed.get_data()
+            itk_moving = img_moving.get_data()
+            itk_mask_fixed = mask_fixed.get_data() if mask_fixed is not None else None
+            if mask_moving is None and mask_fixed is not None:
+                mask_moving = mask_fixed
+            itk_mask_moving = mask_moving.get_data() if mask_moving is not None else None
+
+            start_affine = time()
+            with torch.cuda.device(device_id):
+                fa_image_fixed = Image(itk_fixed, device=device_str)
+                fa_image_moving = Image(itk_moving, device=device_str)
+                if itk_mask_fixed is not None:
+                    fa_mask_fixed = Image(itk_mask_fixed, is_segmentation=True, device=device_str)
+                    fa_image_fixed.array = fa_image_fixed.array * fa_mask_fixed.array
+                if itk_mask_moving is not None:
+                    fa_mask_moving = Image(itk_mask_moving, is_segmentation=True, device=device_str)
+                    fa_image_moving.array = fa_image_moving.array * fa_mask_moving.array
+
+                batch_fixed = BatchedImages(fa_image_fixed)
+                batch_moving = BatchedImages(fa_image_moving)
+                affine_reg = AffineRegistration(
+                    scales=scales,
+                    iterations=affine_iterations,
+                    fixed_images=batch_fixed,
+                    moving_images=batch_moving,
+                    loss_type=loss_type,
+                    optimizer='Adam',
+                    optimizer_lr=affine_lr,
+                    **loss_kwargs
+                )
+                affine_reg.optimize()
+                affine_matrix = affine_reg.get_affine_matrix().detach().cpu().clone()
+                del affine_reg
+            gc.collect()
+            torch.cuda.empty_cache()
+            logger.info(f"Affine-only registration completed in {time() - start_affine:.2f} seconds")
+            return TPData(affine_matrix=affine_matrix.numpy().copy())
+
+        except Exception as e:
+            logger.error(f"Affine-only registration failed on cuda:{device_id}: {e}", exc_info=True)
+            self._cleanup_gpu()
+            raise
+
+    def run_deformable_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, init_affine_matrix=None, mask_fixed=None, mask_moving=None) -> TPData:
+        """Run deformable registration (optionally initialized with a 4x4 numpy affine) and reslice."""
+        device_id = torch.cuda.current_device()
+        device_str = f"cuda:{device_id}"
+        torch.cuda.set_device(device_id)
+
+        if isinstance(options, dict):
+            backend_options_dict = options.get('registration_backend_options', {})
+            backend_options = FireantsRegistrationOptions(**backend_options_dict) if isinstance(backend_options_dict, dict) else backend_options_dict
+        else:
+            backend_options = options.registration_backend_options
+            if isinstance(backend_options, dict):
+                backend_options = FireantsRegistrationOptions(**backend_options)
+
+        if not isinstance(backend_options, FireantsRegistrationOptions):
+            raise ValueError("Expected FireantsRegistrationOptions for FireantsRegistrationHandler")
+
+        scales = backend_options.scales
+        deformable_iterations = backend_options.deformable_iterations
+        deformable_lr = backend_options.deformable_lr
+        loss_type = backend_options.loss_type
+        cc_kernel_size = backend_options.cc_kernel_size
+        deformation_type = backend_options.deformation_type
+        loss_kwargs = {}
+        if loss_type == 'cc':
+            loss_kwargs['cc_kernel_size'] = cc_kernel_size
+
+        try:
+            itk_fixed = img_fixed.get_data()
+            itk_moving = img_moving.get_data()
+            itk_to_reslice = img_to_reslice.get_data()
+            reslice_meta = {
+                'spacing': itk_to_reslice.GetSpacing(),
+                'origin': itk_to_reslice.GetOrigin(),
+                'direction': itk_to_reslice.GetDirection(),
+                'pixel_id': itk_to_reslice.GetPixelID(),
+            }
+            itk_mask_fixed = mask_fixed.get_data() if mask_fixed is not None else None
+            if mask_moving is None and mask_fixed is not None:
+                mask_moving = mask_fixed
+            itk_mask_moving = mask_moving.get_data() if mask_moving is not None else None
+
+            min_fixed_spacing = min(img_fixed.get_data().GetSpacing())
+            smooth_grad_sigma_vox = backend_options.smooth_grad_sigma_mm / min_fixed_spacing
+            smooth_warp_sigma_vox = backend_options.smooth_warp_sigma_mm / min_fixed_spacing
+
+            start_deformable = time()
+            resliced_seg_mesh = None
+
+            with torch.cuda.device(device_id):
+                fa_image_fixed_def = Image(itk_fixed, device=device_str)
+                fa_image_moving_def = Image(itk_moving, device=device_str)
+                if itk_mask_fixed is not None:
+                    fa_mask_fixed_def = Image(itk_mask_fixed, is_segmentation=True, device=device_str)
+                    fa_image_fixed_def.array = fa_image_fixed_def.array * fa_mask_fixed_def.array
+                if itk_mask_moving is not None:
+                    fa_mask_moving_def = Image(itk_mask_moving, is_segmentation=True, device=device_str)
+                    fa_image_moving_def.array = fa_image_moving_def.array * fa_mask_moving_def.array
+
+                batch_fixed_def = BatchedImages(fa_image_fixed_def)
+                batch_moving_def = BatchedImages(fa_image_moving_def)
+                fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=True, is_onehot=False, background_seg_label=0, device=device_str)
+                batch_to_reslice = BatchedImages([fa_image_to_reslice])
+
+                deformable_kwargs = dict(
+                    scales=scales,
+                    iterations=deformable_iterations,
+                    fixed_images=batch_fixed_def,
+                    moving_images=batch_moving_def,
+                    deformation_type=deformation_type,
+                    smooth_grad_sigma=smooth_grad_sigma_vox,
+                    smooth_warp_sigma=smooth_warp_sigma_vox,
+                    loss_type=loss_type,
+                    optimizer='adam',
+                    optimizer_lr=deformable_lr,
+                    **loss_kwargs
+                )
+                if init_affine_matrix is not None:
+                    affine_tensor = torch.from_numpy(init_affine_matrix.astype(np.float32)).to(device_str)
+                    deformable_kwargs['init_affine'] = affine_tensor
+
+                deformable_reg = GreedyRegistration(**deformable_kwargs)
+                deformable_reg.optimize()
+                logger.info(f"Deformable registration completed in {time() - start_deformable:.2f} seconds")
+
+                moved_resliced = deformable_reg.evaluate(batch_fixed_def, batch_to_reslice)
+                resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
+
+                mesh_warp_field = None
+                mesh_warp_image = None
+                if mesh_to_reslice is not None:
+                    logger.info("Computing inverse warp field for mesh reslicing...")
+                    mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
+                    mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
+
+                if mesh_to_reslice is not None:
+                    logger.info("Reslicing target mesh...")
+                    mesh_vertices = mesh_to_reslice.get_vertices()
+                    mesh_vertices_tensor = torch.from_numpy(mesh_vertices).to(device_str, dtype=torch.float32)
+                    warped_vertices = warp_mesh_vertices(mesh_vertices_tensor, mesh_warp_field, img_fixed, img_moving)
+                    warped_vertices_np = warped_vertices.cpu().detach().numpy()
+                    resliced_seg_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
+
+            del deformable_reg, batch_to_reslice, batch_fixed_def, batch_moving_def, fa_image_to_reslice, moved_resliced
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            if resliced_tensor.ndim == 4:
+                resliced_labels = resliced_tensor[0]
+            else:
+                resliced_labels = resliced_tensor
+
+            source_pixel_id = reslice_meta.get('pixel_id')
+            if source_pixel_id is not None:
+                _pixel_id_to_dtype = {
+                    sitk.sitkInt8: np.int8,
+                    sitk.sitkUInt8: np.uint8,
+                    sitk.sitkInt16: np.int16,
+                    sitk.sitkUInt16: np.uint16,
+                    sitk.sitkInt32: np.int32,
+                    sitk.sitkUInt32: np.uint32,
+                    sitk.sitkFloat32: np.float32,
+                    sitk.sitkFloat64: np.float64,
+                }
+                target_dtype = _pixel_id_to_dtype.get(source_pixel_id, np.int16)
+            else:
+                target_dtype = np.int16
+            resliced_labels = np.round(resliced_labels).astype(target_dtype)
+
+            resliced_itk = sitk.GetImageFromArray(resliced_labels)
+            resliced_itk.SetSpacing(reslice_meta['spacing'])
+            resliced_itk.SetOrigin(reslice_meta['origin'])
+            resliced_itk.SetDirection(reslice_meta['direction'])
+
+            return TPData(
+                resliced_image=ImageWrapper(resliced_itk),
+                resliced_segmentation_mesh=resliced_seg_mesh,
+                warp_image=mesh_warp_image
+            )
+
+        except Exception as e:
+            logger.error(f"Deformable registration failed on cuda:{device_id}: {e}", exc_info=True)
+            self._cleanup_gpu()
+            raise
+
     def run_deformable(self, img_fixed, img_moving, options):
         pass
 
