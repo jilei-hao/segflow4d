@@ -23,17 +23,18 @@ class CPUImageHelper(AbstractImageHelper):
         thresh_filter.SetOutsideValue(0)
         return ImageWrapper(thresh_filter.Execute(image.get_data()))
 
-    def resample(self, image: ImageWrapper, resample_factor: float, interpolation: InterpolationType) -> ImageWrapper:
+    def resample(self, image: ImageWrapper, scale_factor: float, interpolation: InterpolationType) -> ImageWrapper:
         image_data = image.get_data()
         if image_data is None:
             raise ValueError("Input image data is None.")
 
         original_size = image_data.GetSize()
         original_spacing = image_data.GetSpacing()
-        # resample_factor > 1 → coarser (lower-resolution) output:
-        #   fewer pixels, larger spacing (e.g., lowres_resample_factor=2 halves each dimension)
-        new_size = [max(1, int(sz / resample_factor)) for sz in original_size]
-        new_spacing = [sp * resample_factor for sp in original_spacing]
+        # scale_factor is a fraction of the original resolution:
+        #   0.5 → half resolution (fewer pixels, larger spacing)
+        #   2.0 → double resolution (more pixels, smaller spacing)
+        new_size = [max(1, int(sz * scale_factor)) for sz in original_size]
+        new_spacing = [sp / scale_factor for sp in original_spacing]
 
         resample_filter = sitk.ResampleImageFilter()
         resample_filter.SetSize(new_size)

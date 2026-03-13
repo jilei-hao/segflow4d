@@ -6,7 +6,7 @@ def main():
     parser = argparse.ArgumentParser(description="Create TP images from input image")
     parser.add_argument("--input", type=str, required=True, help="Path to input image")
     parser.add_argument("--output-dir", type=str, required=True, help="Directory to save output images")
-    parser.add_argument("--resample-factor", type=float, required=True, help="Resample factor")
+    parser.add_argument("--scale-factor", type=float, required=True, help="Scale factor (0.5 = half resolution, 2.0 = double resolution)")
     parser.add_argument("--timepoints", type=int, nargs='+', required=True, help="List of timepoints to extract")
     args = parser.parse_args()
 
@@ -15,7 +15,7 @@ def main():
     tp_images = create_tp_images(
         image4d=input_image,
         target_timepoints=args.timepoints,
-        resample_factor=args.resample_factor
+        scale_factor=args.scale_factor
     )
     for t, tp_image_group in tp_images.items():
         print(f"Writing out timepoint {t}...")

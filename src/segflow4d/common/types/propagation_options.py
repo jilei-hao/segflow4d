@@ -7,7 +7,7 @@ class PropagationOptions:
     '''
     A class representing options for propagation.
     '''
-    lowres_resample_factor: float
+    lowres_scale_factor: float
     dilation_radius: int
     registration_backend: str
     registration_backend_options: AbstractRegistrationOptions

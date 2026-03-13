@@ -83,7 +83,7 @@ class PropagationInputFactory:
         '''
 
         self._options = PropagationOptions(
-            lowres_resample_factor=lowres_factor,
+            lowres_scale_factor=lowres_factor,
             dilation_radius=dilation_radius,
             registration_backend=registration_backend,
             write_result_to_disk=write_result_to_disk,

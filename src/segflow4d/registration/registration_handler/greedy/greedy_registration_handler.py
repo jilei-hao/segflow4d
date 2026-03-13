@@ -247,8 +247,8 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
 
         reslice_cmd = (
             f"-rf my_fixed "
-            f"-rm my_seg my_resliced "
             f"-ri LABEL 0.2mm "
+            f"-rm my_seg my_resliced "
             f"-r my_warp my_affine "
             f"{common_flags}"
         ).strip()

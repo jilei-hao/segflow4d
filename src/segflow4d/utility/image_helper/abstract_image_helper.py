@@ -9,7 +9,7 @@ class AbstractImageHelper(ABC):
         pass
 
     @abstractmethod
-    def resample(self, image: ImageWrapper, resample_factor: float, interpolation: InterpolationType) -> ImageWrapper:
+    def resample(self, image: ImageWrapper, scale_factor: float, interpolation: InterpolationType) -> ImageWrapper:
         pass
 
     @abstractmethod
