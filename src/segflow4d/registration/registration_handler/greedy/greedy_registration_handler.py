@@ -82,8 +82,10 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
 
     @staticmethod
     def _build_common_flags(opts: GreedyRegistrationOptions) -> str:
-        """Build CLI fragment shared across greedy calls (threads, verbosity)."""
+        """Build CLI fragment shared across greedy calls (threads, verbosity, precision)."""
         parts = []
+        if opts.use_float:
+            parts.append("-float")
         if opts.threads is not None:
             parts.append(f"-threads {opts.threads}")
         if opts.verbosity > 0:
@@ -159,9 +161,10 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             in ``registration_backend_options``.  May also be a plain ``dict``
             (multiprocessing serialisation).
         mask_fixed:
-            Optional binary mask applied to the fixed image before registration.
+            Optional binary mask for the fixed image, passed to greedy via ``-gm``.
         mask_moving:
-            Optional binary mask applied to the moving image.
+            Accepted for interface compatibility but intentionally ignored.
+            Greedy native mask logic only applies the fixed mask.
 
         Returns
         -------
@@ -173,6 +176,7 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         opts = self._resolve_options(options)
 
         itk_fixed = img_fixed.get_data()
+        assert itk_fixed is not None, "img_fixed contains no image data"
         itk_moving = img_moving.get_data()
         itk_to_reslice = img_to_reslice.get_data()
         reslice_pixel_id: int = img_to_reslice.get_data().GetPixelID()  # type: ignore[union-attr]
@@ -180,15 +184,9 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         common_flags = self._build_common_flags(opts)
         metric_str = opts.metric_flag()
 
-        # Apply masks by zero-ing out image intensities outside the mask region
-        if mask_fixed is not None:
-            itk_mask_fixed = mask_fixed.get_data()
-            itk_mask_cast = sitk.Cast(itk_mask_fixed, sitk.sitkFloat32)
-            itk_fixed = sitk.Multiply(sitk.Cast(itk_fixed, sitk.sitkFloat32), itk_mask_cast)
-        if mask_moving is not None:
-            itk_mask_moving = mask_moving.get_data()
-            itk_mask_cast = sitk.Cast(itk_mask_moving, sitk.sitkFloat32)
-            itk_moving = sitk.Multiply(sitk.Cast(itk_moving, sitk.sitkFloat32), itk_mask_cast)
+        # Greedy native mask: only the fixed mask is applied via -gm; the moving
+        # mask is intentionally ignored (greedy handles it internally).
+        itk_mask_fixed = mask_fixed.get_data() if mask_fixed is not None else None
 
         # Reuse a single Greedy3D instance across all stages so that cached
         # ITK transform objects (e.g. my_affine) retain the correct ITK type
@@ -207,12 +205,16 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             f"-n {opts.affine_schedule()} "
             f"-m {metric_str} "
             f"-jitter {opts.jitter} "
+            f"{'-gm my_mask_fixed ' if itk_mask_fixed is not None else ''}"
             f"-o my_affine "
             f"{common_flags}"
         ).strip()
 
         logger.debug(f"Greedy affine command: {affine_cmd}")
-        g.execute(affine_cmd, my_fixed=itk_fixed, my_moving=itk_moving, my_affine=None)
+        affine_kwargs = dict(my_fixed=itk_fixed, my_moving=itk_moving, my_affine=None)
+        if itk_mask_fixed is not None:
+            affine_kwargs['my_mask_fixed'] = itk_mask_fixed
+        g.execute(affine_cmd, **affine_kwargs)
 
         affine_matrix: np.ndarray = g['my_affine']
         logger.info(f"Affine registration completed in {time() - t0:.2f}s")
@@ -229,12 +231,16 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             f"-n {opts.deformable_schedule()} "
             f"-m {metric_str} "
             f"-s {opts.smooth_sigma_pre_mm}mm {opts.smooth_sigma_post_mm}mm "
+            f"{'-gm my_mask_fixed ' if itk_mask_fixed is not None else ''}"
             f"-o my_warp "
             f"{common_flags}"
         ).strip()
 
         logger.debug(f"Greedy deformable command: {deform_cmd}")
-        g.execute(deform_cmd, my_fixed=itk_fixed, my_moving=itk_moving, my_warp=None)
+        deform_kwargs = dict(my_fixed=itk_fixed, my_moving=itk_moving, my_warp=None)
+        if itk_mask_fixed is not None:
+            deform_kwargs['my_mask_fixed'] = itk_mask_fixed
+        g.execute(deform_cmd, **deform_kwargs)
 
         warp_field_sitk: sitk.Image = g['my_warp']
         logger.info(f"Deformable registration completed in {time() - t1:.2f}s")
@@ -247,7 +253,7 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
 
         reslice_cmd = (
             f"-rf my_fixed "
-            f"-ri LABEL 0.2mm "
+            f"-ri LABEL {opts.label_interpolation} "
             f"-rm my_seg my_resliced "
             f"-r my_warp my_affine "
             f"{common_flags}"

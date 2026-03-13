@@ -13,6 +13,8 @@ registration_backend_options:
   smooth_sigma_post_mm: 1.5
   affine_iterations: [100, 50]
   deformable_iterations: [100, 25, 10]
+  use_float: true  # pass -float to greedy for single-precision computation (default: true)
+  label_interpolation: "0.2vox"  # smoothing for LABEL reslice; accepts "0.2vox" or "0.5mm" (default: 0.2vox)
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:

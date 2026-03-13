@@ -33,6 +33,12 @@ class GreedyRegistrationOptions(AbstractRegistrationOptions):
         threads: Number of CPU threads for greedy to use.
             None means greedy will use all available cores.
         verbosity: Greedy verbosity level (0 = silent, 1 = normal, 2 = verbose).
+        use_float: When True, pass ``-float`` to greedy, enabling single-precision
+            (float32) computation.  Reduces memory usage and typically speeds up
+            registration with negligible accuracy impact.
+        label_interpolation: Smoothing parameter for the LABEL reslice interpolation
+            (``-ri LABEL <value>``).  Accepts voxel or mm units, e.g. ``"0.2vox"``
+            or ``"0.5mm"``.
     """
 
     metric: Literal['NCC', 'SSD', 'NMI'] = 'NCC'
@@ -45,6 +51,8 @@ class GreedyRegistrationOptions(AbstractRegistrationOptions):
     jitter: float = 0.5
     threads: int | None = None
     verbosity: int = 0
+    use_float: bool = True
+    label_interpolation: str = "0.2vox"
 
     def __post_init__(self):
         if self.metric not in ('NCC', 'SSD', 'NMI'):

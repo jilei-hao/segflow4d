@@ -86,6 +86,10 @@ def parse_arguments():
                         help='Post-smoothing sigma for greedy warp fields in mm (default: 0.5)')
     parser.add_argument('--threads', type=int, default=None,
                         help='Number of CPU threads for greedy (default: all cores)')
+    parser.add_argument('--greedy-use-float', action=argparse.BooleanOptionalAction, default=True,
+                        help='Use single-precision (float32) for greedy registration via -float flag (default: true)')
+    parser.add_argument('--label-interpolation', type=str, default=None,
+                        help='Smoothing parameter for greedy LABEL reslice interpolation, e.g. "0.2vox" or "0.5mm" (default: 0.2vox)')
 
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
@@ -215,6 +219,10 @@ def main():
             cli_backend_options['smooth_sigma_post_mm'] = args.smooth_sigma_post_mm
         if args.threads is not None:
             cli_backend_options['threads'] = args.threads
+        if args.greedy_use_float is not None:
+            cli_backend_options['use_float'] = args.greedy_use_float
+        if args.label_interpolation is not None:
+            cli_backend_options['label_interpolation'] = args.label_interpolation
 
         input_factory.set_options(
             lowres_factor=args.lowres_factor,
