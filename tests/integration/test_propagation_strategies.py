@@ -55,7 +55,7 @@ def _make_identity_result():
 
 def _make_options():
     return PropagationOptions(
-        lowres_resample_factor=2.0,
+        lowres_scale_factor=0.5,
         dilation_radius=2,
         registration_backend="FIREANTS",
         registration_backend_options={},

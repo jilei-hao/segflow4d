@@ -19,9 +19,9 @@ from segflow4d.propagation.tp_partition_input import TPPartitionInput
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_options(lowres_factor=2.0, dilation_radius=2):
+def _make_options(lowres_factor=0.5, dilation_radius=2):
     return PropagationOptions(
-        lowres_resample_factor=lowres_factor,
+        lowres_scale_factor=lowres_factor,
         dilation_radius=dilation_radius,
         registration_backend="FIREANTS",
         registration_backend_options={},

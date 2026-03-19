@@ -69,7 +69,7 @@ def _minimal_greedy_opts(**overrides):
 def _minimal_prop_opts(greedy_opts=None):
     """PropagationOptions wrapping a minimal GreedyRegistrationOptions."""
     return PropagationOptions(
-        lowres_resample_factor=2.0,
+        lowres_scale_factor=0.5,
         dilation_radius=2,
         registration_backend="greedy",
         registration_backend_options=greedy_opts or _minimal_greedy_opts(),
@@ -187,7 +187,7 @@ class TestGreedyHandlerResolveOptions:
     def test_resolve_from_propagation_options_with_greedy_opts(self):
         greedy_opts = GreedyRegistrationOptions(metric="SSD", affine_dof=6)
         prop_opts = PropagationOptions(
-            lowres_resample_factor=2.0,
+            lowres_scale_factor=0.5,
             dilation_radius=2,
             registration_backend="greedy",
             registration_backend_options=greedy_opts,
@@ -219,7 +219,7 @@ class TestGreedyHandlerResolveOptions:
 
     def test_resolve_invalid_type_raises(self):
         prop_opts = PropagationOptions(
-            lowres_resample_factor=2.0,
+            lowres_scale_factor=0.5,
             dilation_radius=2,
             registration_backend="greedy",
             registration_backend_options=object(),  # invalid type
