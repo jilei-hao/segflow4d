@@ -70,7 +70,12 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             backend_opts = options.get('registration_backend_options', {})
             if isinstance(backend_opts, dict):
                 return GreedyRegistrationOptions(**backend_opts)
-            return backend_opts
+            if isinstance(backend_opts, GreedyRegistrationOptions):
+                return backend_opts
+            raise ValueError(
+                f"Expected GreedyRegistrationOptions or dict for GreedyRegistrationHandler, "
+                f"got {type(backend_opts)}"
+            )
         # PropagationOptions object
         backend_opts = options.registration_backend_options
         if isinstance(backend_opts, dict):
