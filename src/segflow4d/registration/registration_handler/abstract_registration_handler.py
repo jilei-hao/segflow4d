@@ -9,7 +9,15 @@ class AbstractRegistrationHandler(ABC):
         pass
 
     @abstractmethod
+    def run_affine_only(self, img_fixed, img_moving, options: PropagationOptions, mask_fixed=None, mask_moving=None) -> TPData:
+        pass
+
+    @abstractmethod
     def run_deformable(self, img_fixed, img_moving, options: PropagationOptions):
+        pass
+
+    @abstractmethod
+    def run_deformable_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, init_affine_matrix=None, mask_fixed=None, mask_moving=None) -> TPData:
         pass
 
     @abstractmethod

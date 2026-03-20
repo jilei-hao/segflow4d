@@ -82,7 +82,14 @@ class PropagationPipeline:
         try:
             # ===== LOW RES PROPAGATION =====
             logger.debug(f"[Thread {thread_id}] Starting low-res propagation")
-            strategy_lr = PropagationStrategyFactory.create_propagation_strategy(PropagationStrategyName.SEQUENTIAL)
+            combo = options.propagation_strategy_combo
+            if combo == "sequential_star":
+                strategy_lr_name = PropagationStrategyName.SEQUENTIAL
+            elif combo == "sasd_star":
+                strategy_lr_name = PropagationStrategyName.SASD
+            else:
+                raise ValueError(f"Unknown propagation_strategy_combo: {combo!r}")
+            strategy_lr = PropagationStrategyFactory.create_propagation_strategy(strategy_lr_name)
 
             # run low-res propagation for masks
             propagated_data_lr = strategy_lr.propagate(tp_input_data, options)

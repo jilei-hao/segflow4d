@@ -23,17 +23,21 @@ class CPUImageHelper(AbstractImageHelper):
         thresh_filter.SetOutsideValue(0)
         return ImageWrapper(thresh_filter.Execute(image.get_data()))
 
-    def resample(self, image: ImageWrapper, resample_factor: float, interpolation: InterpolationType) -> ImageWrapper:
+    def resample(self, image: ImageWrapper, scale_factor: float, interpolation: InterpolationType) -> ImageWrapper:
+        if scale_factor <= 0:
+            raise ValueError(f"scale_factor must be > 0, got {scale_factor}.")
+
         image_data = image.get_data()
         if image_data is None:
             raise ValueError("Input image data is None.")
 
         original_size = image_data.GetSize()
         original_spacing = image_data.GetSpacing()
-        # resample_factor > 1 → coarser (lower-resolution) output:
-        #   fewer pixels, larger spacing (e.g., lowres_resample_factor=2 halves each dimension)
-        new_size = [max(1, int(sz / resample_factor)) for sz in original_size]
-        new_spacing = [sp * resample_factor for sp in original_spacing]
+        # scale_factor is a fraction of the original resolution:
+        #   0.5 → half resolution (fewer pixels, larger spacing)
+        #   2.0 → double resolution (more pixels, smaller spacing)
+        new_size = [max(1, int(sz * scale_factor)) for sz in original_size]
+        new_spacing = [sp / scale_factor for sp in original_spacing]
 
         resample_filter = sitk.ResampleImageFilter()
         resample_filter.SetSize(new_size)
@@ -82,8 +86,12 @@ class CPUImageHelper(AbstractImageHelper):
         if image_data is None:
             raise ValueError("Input 4D image data is None.")
         size = list(image_data.GetSize())
+        if timepoint < 1 or timepoint > size[3]:
+            raise ValueError(
+                f"timepoint {timepoint} is out of range [1, {size[3]}]."
+            )
         size[3] = 0  # Collapse the 4th dimension to extract a single 3-D volume
-        index = [0, 0, 0, timepoint]  # timepoint is 0-based index
+        index = [0, 0, 0, timepoint - 1]  # timepoint is 1-based; convert to 0-based for ITK
         extractor.SetSize(size)
         extractor.SetIndex(index)
         return ImageWrapper(extractor.Execute(image_data))

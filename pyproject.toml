@@ -38,6 +38,12 @@ test = [
     "pytest-json-report>=1.5",
     "pytest-cov>=4.0",
 ]
+greedy = [
+    "picsl-greedy",
+]
+all = [
+    "picsl-greedy",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -46,6 +52,7 @@ markers = [
     "gpu: tests that require a CUDA-capable GPU",
     "slow: tests that take a long time to run",
     "requires_real_data: tests that require real patient data fixtures",
+    "greedy: tests that require picsl-greedy (pip install segflow4d[greedy])",
 ]
 
 [tool.setuptools.packages.find]

@@ -85,7 +85,7 @@ class TestPipelineRealSmoke:
         from segflow4d.propagation.propagation_pipeline import PropagationPipeline
 
         n_tp = _get_n_tp(IMAGE_4D_PATH)
-        tp_targets = list(range(1, n_tp))
+        tp_targets = list(range(2, n_tp + 1))
         out_dir = str(tmp_path / "output")
         os.makedirs(out_dir, exist_ok=True)
 
@@ -93,7 +93,7 @@ class TestPipelineRealSmoke:
             PropagationInputFactory()
             .set_image_4d_from_disk(IMAGE_4D_PATH)
             .add_tp_input_group_from_disk(
-                tp_ref=0,
+                tp_ref=1,
                 tp_target=tp_targets,
                 seg_ref_path=SEG_REF_PATH,
                 additional_meshes_ref=None,
@@ -134,8 +134,8 @@ class TestPipelineRealSmoke:
             PropagationInputFactory()
             .set_image_4d_from_disk(IMAGE_4D_PATH)
             .add_tp_input_group_from_disk(
-                tp_ref=0,
-                tp_target=list(range(1, n_tp)),
+                tp_ref=1,
+                tp_target=list(range(2, n_tp + 1)),
                 seg_ref_path=SEG_REF_PATH,
                 additional_meshes_ref=None,
             )
@@ -194,8 +194,8 @@ class TestPipelineRealDiceRegression:
             PropagationInputFactory()
             .set_image_4d_from_disk(IMAGE_4D_PATH)
             .add_tp_input_group_from_disk(
-                tp_ref=0,
-                tp_target=list(range(1, n_tp)),
+                tp_ref=1,
+                tp_target=list(range(2, n_tp + 1)),
                 seg_ref_path=SEG_REF_PATH,
                 additional_meshes_ref=None,
             )

@@ -4,13 +4,13 @@ from segflow4d.common.types.interpolation_type import InterpolationType
 from segflow4d.common.types.tp_image_group import TPImageGroup
 from segflow4d.common.types.image_wrapper import ImageWrapper
 
-def create_reference_mask(seg_ref_image: ImageWrapper, resample_factor: float, dilation_radius: int) -> ImageWrapper:
+def create_reference_mask(seg_ref_image: ImageWrapper, scale_factor: float, dilation_radius: int) -> ImageWrapper:
     """
     Create a reference mask by resampling the segmentation reference image.
 
     Args:
         seg_ref_image (sitk.Image): The segmentation reference image.
-        resample_factor (float): The factor by which to resample the image.
+        scale_factor (float): The scale factor for resampling (0.5 = half resolution, 2.0 = double resolution).
         dilation_radius (int): The radius for binary dilation.
 
     Returns:
@@ -21,11 +21,11 @@ def create_reference_mask(seg_ref_image: ImageWrapper, resample_factor: float, d
 
     binary_mask = image_helper.binary_threshold(seg_ref_image, lo=1, hi=255)
     dilated_mask = image_helper.binary_dilate(binary_mask, radius=dilation_radius)
-    rs_mask = image_helper.resample(dilated_mask, resample_factor=resample_factor, interpolation=InterpolationType.NEAREST)
+    rs_mask = image_helper.resample(dilated_mask, scale_factor=scale_factor, interpolation=InterpolationType.NEAREST)
 
     return rs_mask
 
-def create_tp_images(image4d: ImageWrapper, target_timepoints: list[int], resample_factor: float) -> dict[int, TPImageGroup]:
+def create_tp_images(image4d: ImageWrapper, target_timepoints: list[int], scale_factor: float) -> dict[int, TPImageGroup]:
     """
     Generate 3D images for specified timepoints from a 4D image.
 
@@ -49,7 +49,7 @@ def create_tp_images(image4d: ImageWrapper, target_timepoints: list[int], resamp
         extractor.SetSize(size)
         extractor.SetIndex(index)
         tp_image = extractor.Execute(image4d.get_data())
-        tp_image_lowres = image_helper.resample(ImageWrapper(tp_image), resample_factor=resample_factor, interpolation=InterpolationType.LINEAR)
+        tp_image_lowres = image_helper.resample(ImageWrapper(tp_image), scale_factor=scale_factor, interpolation=InterpolationType.LINEAR)
         tp_images[t] = TPImageGroup(image_fullres=ImageWrapper(tp_image), image_lowres=tp_image_lowres)
 
     return tp_images

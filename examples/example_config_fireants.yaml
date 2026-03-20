@@ -5,6 +5,7 @@ lowres_factor: 0.5
 dilation_radius: 2
 registration_backend: fireants
 minimum_required_vram_gb: 10
+propagation_strategy_combo: sequential_star # options: sequential_star, sasd_star
 registration_backend_options:
   smooth_grad_sigma_mm: 3.0
   smooth_warp_sigma_mm: 1.5
@@ -16,14 +17,14 @@ registration_backend_options:
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:
-  - tp_ref: 0
-    tp_targets: [1, 2, 3]
-    seg_ref: /path/to/seg_ref_tp0.tif
+  - tp_ref: 1
+    tp_targets: [2, 3, 4]
+    seg_ref: /path/to/seg_ref_tp1.tif
     additional_meshes:
-      mesh1: /path/to/mesh1_tp0.obj
-      mesh2: /path/to/mesh2_tp0.obj
+      mesh1: /path/to/mesh1_tp1.obj
+      mesh2: /path/to/mesh2_tp1.obj
   - tp_ref: 5
-    tp_targets: [4, 6, 7]
+    tp_targets: [6, 7, 8]
     seg_ref: /path/to/seg_ref_tp5.tif
     additional_meshes:
       mesh1: /path/to/mesh1_tp5.obj

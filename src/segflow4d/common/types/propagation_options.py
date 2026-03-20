@@ -7,7 +7,7 @@ class PropagationOptions:
     '''
     A class representing options for propagation.
     '''
-    lowres_resample_factor: float
+    lowres_scale_factor: float
     dilation_radius: int
     registration_backend: str
     registration_backend_options: AbstractRegistrationOptions
@@ -16,6 +16,7 @@ class PropagationOptions:
     debug: bool = False
     debug_output_directory: str = ""
     minimum_required_vram_gb: int = 10
+    propagation_strategy_combo: str = "sequential_star"
 
     def __post_init__(self):
         pass

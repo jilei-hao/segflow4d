@@ -1,4 +1,5 @@
 import os
+import signal
 import sys
 import logging
 from segflow4d.propagation.propagation_pipeline import PropagationPipeline
@@ -72,6 +73,27 @@ def parse_arguments():
     parser.add_argument('--loss-type', type=str, default=None, choices=['mse', 'cc'], help='Similarity metric: mse or cc (cross-correlation)')
     parser.add_argument('--cc-kernel-size', type=int, default=None, help='Kernel size for cross-correlation loss (used when --loss-type=cc)')
 
+    # Greedy-specific options (picsl-greedy backend)
+    parser.add_argument('--metric', type=str, default=None, choices=['NCC', 'SSD', 'NMI'],
+                        help='Similarity metric for greedy backend: NCC, SSD, or NMI')
+    parser.add_argument('--metric-radius', type=int, nargs='+', default=None,
+                        help='Patch radius for NCC metric, one value per image dimension (e.g. --metric-radius 2 2 2)')
+    parser.add_argument('--affine-dof', type=int, default=None,
+                        help='Degrees of freedom for greedy affine stage: 6 (rigid), 7 (similarity), 12 (full affine)')
+    parser.add_argument('--smooth-sigma-pre-mm', type=float, default=None,
+                        help='Pre-smoothing sigma for greedy gradient fields in mm (default: 2.0)')
+    parser.add_argument('--smooth-sigma-post-mm', type=float, default=None,
+                        help='Post-smoothing sigma for greedy warp fields in mm (default: 0.5)')
+    parser.add_argument('--threads', type=int, default=None,
+                        help='Number of CPU threads for greedy (default: all cores)')
+    parser.add_argument('--greedy-use-float', action=argparse.BooleanOptionalAction, default=True,
+                        help='Use single-precision (float32) for greedy registration via -float flag (default: true)')
+    parser.add_argument('--label-interpolation', type=str, default=None,
+                        help='Smoothing parameter for greedy LABEL reslice interpolation, e.g. "0.2vox" or "0.5mm" (default: 0.2vox)')
+
+    parser.add_argument('--propagation-strategy-combo', type=str, default='sequential_star',
+                        choices=['sequential_star', 'sasd_star'],
+                        help='Strategy combo for lowres+highres stages (default: sequential_star)')
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
@@ -91,6 +113,26 @@ def load_config(config_path):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
+
+def _install_signal_handlers():
+    """Register SIGTERM/SIGINT handlers to kill all worker subprocesses on exit."""
+    from segflow4d.registration.registration_manager import RegistrationManager
+
+    def _handler(signum, frame):
+        logger.warning(f"Received signal {signum}, shutting down all workers...")
+        try:
+            RegistrationManager.get_instance().shutdown(wait=False)
+        except Exception:
+            pass
+        try:
+            async_writer.shutdown(wait=False)
+        except Exception:
+            pass
+        os._exit(1)
+
+    signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGINT, _handler)
+
 
 def main():
     args = parse_arguments()
@@ -116,6 +158,7 @@ def main():
             debug=config.get('debug', False),
             debug_output_directory=config.get('debug_dir', ''),
             minimum_required_vram_gb=config.get('minimum_required_vram_gb', 0),
+            propagation_strategy_combo=config.get('propagation_strategy_combo', 'sequential_star'),
             **backend_options
         )
         
@@ -131,9 +174,9 @@ def main():
             tp_targets = group.get('tp_targets', [])
             seg_ref = group.get('seg_ref')
             additional_meshes = group.get('additional_meshes', {})
-            
+
             logger.info(f"Adding tp_input_group with tp_ref={tp_ref}, tp_targets={tp_targets}")
-            
+
             input_factory.add_tp_input_group_from_disk(
                 tp_ref=tp_ref,
                 tp_target=tp_targets,
@@ -167,6 +210,23 @@ def main():
             cli_backend_options['loss_type'] = args.loss_type
         if args.cc_kernel_size is not None:
             cli_backend_options['cc_kernel_size'] = args.cc_kernel_size
+        # Greedy-specific options
+        if args.metric is not None:
+            cli_backend_options['metric'] = args.metric
+        if args.metric_radius is not None:
+            cli_backend_options['metric_radius'] = args.metric_radius
+        if args.affine_dof is not None:
+            cli_backend_options['affine_dof'] = args.affine_dof
+        if args.smooth_sigma_pre_mm is not None:
+            cli_backend_options['smooth_sigma_pre_mm'] = args.smooth_sigma_pre_mm
+        if args.smooth_sigma_post_mm is not None:
+            cli_backend_options['smooth_sigma_post_mm'] = args.smooth_sigma_post_mm
+        if args.threads is not None:
+            cli_backend_options['threads'] = args.threads
+        if args.greedy_use_float is not None:
+            cli_backend_options['use_float'] = args.greedy_use_float
+        if args.label_interpolation is not None:
+            cli_backend_options['label_interpolation'] = args.label_interpolation
 
         input_factory.set_options(
             lowres_factor=args.lowres_factor,
@@ -177,11 +237,14 @@ def main():
             output_directory=args.output,
             debug=args.debug,
             debug_output_directory=args.debug_dir,
+            propagation_strategy_combo=args.propagation_strategy_combo,
             **cli_backend_options
         )
 
     propagation_input = input_factory.build()
     pipeline = PropagationPipeline(propagation_input)
+
+    _install_signal_handlers()
 
     logger.info("Starting SegFlow4D Propagation Pipeline")
     pipeline.run()

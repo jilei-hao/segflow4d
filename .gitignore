@@ -96,4 +96,7 @@ Thumbs.db
 
 
 # dev
+
+# FireANTs is cloned and installed by scripts/setup_fireants.sh — not tracked
+FireANTs/
 debug/

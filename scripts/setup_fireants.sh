@@ -421,3 +421,9 @@ if missing:
 else:
     print("\nFireANTs with fused ops installed successfully!")
 EOF
+
+# ── Clean up source directory ─────────────────────────────────────────────────
+echo ""
+echo "==> Removing FireANTs source directory (${CLONE_DIR})..."
+rm -rf "${CLONE_DIR}"
+echo "    Done."

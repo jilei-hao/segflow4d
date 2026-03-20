@@ -1,0 +1,32 @@
+image4d: /path/to/4d_image.tif
+output: /path/to/output_directory
+log_level: INFO
+lowres_factor: 0.5
+dilation_radius: 2
+registration_backend: greedy
+minimum_required_vram_gb: 10
+propagation_strategy_combo: sequential_star # options: sequential_star, sasd_star
+registration_backend_options:
+  metric: SSD
+  affine_dof: 6
+  threads: 1
+  smooth_sigma_pre_mm: 3.0
+  smooth_sigma_post_mm: 1.5
+  affine_iterations: [100, 50]
+  deformable_iterations: [100, 25, 10]
+  use_float: true  # pass -float to greedy for single-precision computation (default: true)
+  label_interpolation: "0.2vox"  # smoothing for LABEL reslice; accepts "0.2vox" or "0.5mm" (default: 0.2vox)
+debug: false
+debug_dir: /path/to/debug_output
+tp_input_groups:
+  - tp_ref: 1
+    tp_targets: [2, 3, 4]
+    seg_ref: /path/to/seg_ref_tp1.tif
+    additional_meshes:
+      mesh1: /path/to/mesh1_tp1.obj
+      mesh2: /path/to/mesh2_tp1.obj
+  - tp_ref: 5
+    tp_targets: [6, 7, 8]
+    seg_ref: /path/to/seg_ref_tp5.tif
+    additional_meshes:
+      mesh1: /path/to/mesh1_tp5.obj

@@ -12,5 +12,8 @@ class PropagationStrategyFactory:
             case PropagationStrategyName.STAR:
                 from segflow4d.propagation.propagation_strategy.star_propagation_strategy import StarPropagationStrategy
                 return StarPropagationStrategy()
+            case PropagationStrategyName.SASD:
+                from segflow4d.propagation.propagation_strategy.sasd_propagation_strategy import SASDPropagationStrategy
+                return SASDPropagationStrategy()
             case _:
                 raise ValueError(f"Unknown propagation strategy type: {strategy_type}")

@@ -35,7 +35,7 @@ class TPPartition:
             tp_image = ih.extract_timepoint_image(image_4d, tp)
 
             logger.info(f"Resampling timepoint {tp} image to low resolution for TPPartition")
-            tp_image_low_res = ih.resample(tp_image, resample_factor=self._options.lowres_resample_factor, interpolation=InterpolationType.LINEAR)
+            tp_image_low_res = ih.resample(tp_image, scale_factor=self._options.lowres_scale_factor, interpolation=InterpolationType.LINEAR)
 
             tp_data_dict[tp] = TPData(image=tp_image, image_low_res=tp_image_low_res)
 
@@ -48,7 +48,7 @@ class TPPartition:
         tp_data_dict[self._input.tp_ref].segmentation = self._input.seg_ref
 
         logger.info(f"Creating reference mask for timepoint {self._input.tp_ref} in TPPartition")
-        mask_ref_lr = create_reference_mask(tp_data_dict[self._input.tp_ref].segmentation, resample_factor=self._options.lowres_resample_factor, dilation_radius=self._options.dilation_radius)
+        mask_ref_lr = create_reference_mask(tp_data_dict[self._input.tp_ref].segmentation, scale_factor=self._options.lowres_scale_factor, dilation_radius=self._options.dilation_radius)
         tp_data_dict[self._input.tp_ref].mask_low_res = mask_ref_lr
         tp_data_dict[self._input.tp_ref].mask_high_res = create_high_res_mask(ref_seg_image=self._input.seg_ref, low_res_mask=mask_ref_lr)
 
