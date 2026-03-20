@@ -26,6 +26,29 @@ def _make_4d_image(num_timepoints: int) -> ImageWrapper:
     return ImageWrapper(image_4d)
 
 
+def _make_3d_image() -> ImageWrapper:
+    """Build a small synthetic 3D image for resampling tests."""
+    arr = np.ones((5, 6, 7), dtype=np.float32)
+    return ImageWrapper(sitk.GetImageFromArray(arr))
+
+
+class TestResample:
+    def setup_method(self):
+        self.helper = CPUImageHelper()
+
+    def test_zero_scale_factor_raises(self):
+        """scale_factor=0 must raise ValueError."""
+        image = _make_3d_image()
+        with pytest.raises(ValueError, match="scale_factor must be > 0"):
+            self.helper.resample(image, 0.0, None)
+
+    def test_negative_scale_factor_raises(self):
+        """Negative scale_factor must raise ValueError."""
+        image = _make_3d_image()
+        with pytest.raises(ValueError, match="scale_factor must be > 0"):
+            self.helper.resample(image, -1.0, None)
+
+
 class TestExtractTimepointImage:
     def setup_method(self):
         self.helper = CPUImageHelper()
