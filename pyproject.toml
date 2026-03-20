@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "segflow4d"
-version = "1.1.0"
+version = "1.1.1"
 description = "Create 4D segmentation from sparse segmentations using image registration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,6 +31,7 @@ test_registration_manager = "segflow4d.registration.tests.test_registration_mana
 gpu-mesh-warper = "segflow4d.registration.registration_handler.fireants.gpu_mesh_warper:main"
 segmentation-validation = "segflow4d.utility.validation.segmentation_validation:main"
 batch-segmentation-validation = "segflow4d.utility.validation.batch_validation:main"
+segflow4d-install-fireants = "segflow4d.setup.install_fireants:main"
 
 [project.optional-dependencies]
 test = [

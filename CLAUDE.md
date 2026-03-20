@@ -138,6 +138,7 @@ Defined in `pyproject.toml` `[project.scripts]`:
 | `segmentation-validation` | `segflow4d.utility.validation.segmentation_validation:main` | Compute Dice + surface distances |
 | `batch-segmentation-validation` | `segflow4d.utility.validation.batch_validation:main` | Batch validation across cases |
 | `test-registration-manager` | `segflow4d.registration.tests.test_registration_manager:main` | Registration manager integration test |
+| `segflow4d-install-fireants` | `segflow4d.setup.install_fireants:main` | Clone, build, and install FireANTs fused CUDA ops (post-install step for PyPI users) |
 
 ---
 
@@ -164,6 +165,8 @@ Defined in `pyproject.toml` `[project.scripts]`:
 
 ## Setup and Installation
 
+### From PyPI
+
 ```bash
 # 1. Create and activate conda env with Python 3.10
 conda create -n segflow4d python=3.10
@@ -172,11 +175,28 @@ conda activate segflow4d
 # 2. Install PyTorch (GPU build — match your CUDA version)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# 3. Install FireANTs (requires NVCC)
-bash scripts/setup_fireants.sh
+# 3. Install the package
+pip install segflow4d
 
-# 4. Install the package
+# 4. Install FireANTs fused CUDA ops (requires NVCC)
+segflow4d-install-fireants
+```
+
+### From source (development)
+
+```bash
+# 1. Create and activate conda env with Python 3.10
+conda create -n segflow4d python=3.10
+conda activate segflow4d
+
+# 2. Install PyTorch (GPU build — match your CUDA version)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# 3. Install the package in editable mode
 pip install -e .
+
+# 4. Install FireANTs fused CUDA ops (requires NVCC)
+segflow4d-install-fireants
 ```
 
 For CUDA/PyTorch compatibility details, see README.md.

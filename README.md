@@ -112,33 +112,19 @@ pip install torch torchvision \
 > For a permanent fix, ask your IT team for the corporate CA certificate and run:
 > `pip config set global.cert /path/to/ca-bundle.pem`
 
-#### 3. Install FireANTs with fused CUDA ops
+#### 3. Install SegFlow4D
 
-The fused CUDA operations are required for best performance. Run the provided setup script:
-
+**From PyPI** (recommended):
 ```bash
-bash scripts/setup_fireants.sh
+pip install segflow4d
 ```
 
-This will:
-- Clone the [FireANTs repository](https://github.com/rohitrango/FireANTs)
-- Install the `fireants` Python package
-- Compile and install the `fireants_fused_ops` CUDA extension
-
-> **Note:** If the system `nvcc` version doesn't match the CUDA version PyTorch
-> was compiled against, the script will automatically install the matching
-> `cuda-toolkit` into the active conda environment via `conda install -c nvidia`.
-> No manual toolkit management is needed in most cases.
-
-#### 4. Install SegFlow4D
-
+**From source** (development):
 ```bash
+git clone https://github.com/your-org/segflow4d.git
+cd segflow4d
 pip install -e .
 ```
-
-This installs `segflow4d` in editable (development) mode, so local code changes
-take effect immediately without reinstalling. All remaining Python dependencies
-listed in `pyproject.toml` are installed automatically.
 
 > **Upgrading from a previous version?** If you installed an older version that
 > used a different package layout, stale top-level packages may linger in
@@ -147,8 +133,36 @@ listed in `pyproject.toml` are installed automatically.
 > ```bash
 > SITE=$(python -c "import site; print(site.getsitepackages()[0])")
 > rm -rf "$SITE"/{common,processing,propagation,registration,utility}
-> pip install -e .
+> pip install segflow4d   # or pip install -e . for source installs
 > ```
+
+#### 4. Install FireANTs with fused CUDA ops
+
+The fused CUDA operations are required for best performance. Run the included
+setup command (available after step 3):
+
+```bash
+segflow4d-install-fireants
+```
+
+This will:
+- Clone the [FireANTs repository](https://github.com/rohitrango/FireANTs) to a
+  temporary directory
+- Install the `fireants` Python package
+- Compile and install the `fireants_fused_ops` CUDA extension
+- Remove the cloned source when done
+
+> **Note:** If the system `nvcc` version doesn't match the CUDA version PyTorch
+> was compiled against, the command will automatically install the matching
+> `cuda-nvcc` into the active conda environment via `conda install -c nvidia`.
+> No manual toolkit management is needed in most cases.
+
+To keep the FireANTs source tree after installation (e.g. for development or
+debugging), pass `--dir`:
+
+```bash
+segflow4d-install-fireants --dir /path/to/FireANTs
+```
 
 ---
 
@@ -248,8 +262,8 @@ segflow4d --help
 
 ## Troubleshooting
 
-**`ModuleNotFoundError: No module named 'fireants_fused_ops'`**  
-The fused ops were not installed. Re-run `bash setup_fireants.sh`.
+**`ModuleNotFoundError: No module named 'fireants_fused_ops'`**
+The fused ops were not installed. Re-run `segflow4d-install-fireants`.
 
 **`ImportError: libc10.so: cannot open shared object file`**  
 PyTorch libraries are not on `LD_LIBRARY_PATH`. Make sure you are running inside the correct conda environment.
@@ -261,7 +275,7 @@ conda environment:
 # Replace 12.1 with your PyTorch CUDA version (python -c "import torch; print(torch.version.cuda)")
 conda install -c nvidia cuda-cudart-dev=12.1
 ```
-Then re-run `bash scripts/setup_fireants.sh`.
+Then re-run `segflow4d-install-fireants`.
 
 **`nvcc warning: incompatible redefinition for option 'compiler-bindir'` / wrong `-ccbin` path**  
 Stale environment variables from a previously activated conda environment (one
@@ -269,10 +283,10 @@ that had `gcc_linux-64` or `gxx_linux-64` installed) are injecting a wrong host
 compiler into `nvcc`. Fix by unsetting them before building:
 ```bash
 unset NVCC_PREPEND_FLAGS NVCC_APPEND_FLAGS CUDAHOSTCXX
-bash scripts/setup_fireants.sh
+segflow4d-install-fireants
 ```
 Or start a fresh shell and activate only your target environment before running
-the script.
+the command.
 
 **`error: #error -- unsupported GNU version! gcc versions later than 12 are not supported!`**  
 Your system GCC is too new for the installed CUDA toolkit (CUDA 12.x requires GCC ≤ 12,
