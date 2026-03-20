@@ -362,5 +362,5 @@ class PropagationPipeline:
         if self._options.write_result_to_disk:
             self.write_results_to_disk(all_tp_output)
 
-
         logger.info("Propagation pipeline completed successfully.")
+        return all_tp_output
