@@ -65,9 +65,23 @@ class TestExtractTimepointImage:
             )
 
     def test_out_of_bounds_raises(self):
-        """Requesting a timepoint beyond the image extent should raise."""
+        """Requesting a timepoint beyond the image extent should raise ValueError."""
         num_tps = 3
         image_4d = _make_4d_image(num_tps)
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ValueError):
             self.helper.extract_timepoint_image(image_4d, num_tps + 1)
+
+    def test_zero_timepoint_raises(self):
+        """Passing tp=0 should raise ValueError (1-based; 0 is invalid)."""
+        image_4d = _make_4d_image(3)
+
+        with pytest.raises(ValueError):
+            self.helper.extract_timepoint_image(image_4d, 0)
+
+    def test_negative_timepoint_raises(self):
+        """Passing a negative timepoint should raise ValueError."""
+        image_4d = _make_4d_image(3)
+
+        with pytest.raises(ValueError):
+            self.helper.extract_timepoint_image(image_4d, -1)
