@@ -11,7 +11,8 @@ def main():
     args = parser.parse_args()
 
     import SimpleITK as sitk
-    input_image = sitk.ReadImage(args.input)
+    from segflow4d.common.types.image_wrapper import ImageWrapper
+    input_image = ImageWrapper(sitk.ReadImage(args.input))
     tp_images = create_tp_images(
         image4d=input_image,
         target_timepoints=args.timepoints,
