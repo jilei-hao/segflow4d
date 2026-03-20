@@ -105,6 +105,7 @@ class SASDPropagationStrategy(AbstractPropagationStrategy):
             logger.info(f"  Deformable completed for target {target_tp}")
             tp_input_data[target_tp].resliced_image = result.resliced_image
             tp_input_data[target_tp].resliced_segmentation_mesh = result.resliced_segmentation_mesh
+            tp_input_data[target_tp].segmentation_mesh = result.resliced_segmentation_mesh
             tp_input_data[target_tp].warp_image = result.warp_image
 
         logger.info("SASD propagation completed")
