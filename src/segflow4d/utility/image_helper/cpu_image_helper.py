@@ -24,6 +24,9 @@ class CPUImageHelper(AbstractImageHelper):
         return ImageWrapper(thresh_filter.Execute(image.get_data()))
 
     def resample(self, image: ImageWrapper, scale_factor: float, interpolation: InterpolationType) -> ImageWrapper:
+        if scale_factor <= 0:
+            raise ValueError(f"scale_factor must be > 0, got {scale_factor}.")
+
         image_data = image.get_data()
         if image_data is None:
             raise ValueError("Input image data is None.")
