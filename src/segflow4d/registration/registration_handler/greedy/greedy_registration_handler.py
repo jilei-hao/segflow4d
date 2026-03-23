@@ -254,18 +254,26 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Reslicing segmentation ...")
             t2 = time()
 
-            reslice_transforms = f"my_warp {affine_file}" if has_init_affine else "my_warp"
-            reslice_cmd = (
-                f"-rf my_fixed "
-                f"-ri LABEL {opts.label_interpolation} "
-                f"-rm my_seg my_resliced "
-                f"-r {reslice_transforms} "
-                f"{common_flags}"
-            ).strip()
-
-            g.execute(reslice_cmd, my_fixed=itk_fixed, my_seg=itk_to_reslice, my_resliced=None)
-
-            resliced_sitk: sitk.Image = g["my_resliced"]
+            # The C++ Greedy3D binding does not populate the None-placeholder
+            # kwarg for reslice output.  Write only the output to a temp file.
+            # my_warp is kept as a named context reference in the same Greedy3D
+            # instance; the affine (if any) is already on disk as affine_file.
+            fd_out, reslice_out_tmp = tempfile.mkstemp(suffix=".nii.gz")
+            os.close(fd_out)
+            try:
+                reslice_transforms = f"my_warp {affine_file}" if has_init_affine else "my_warp"
+                reslice_cmd = (
+                    f"-rf my_fixed "
+                    f"-ri LABEL {opts.label_interpolation} "
+                    f"-rm my_seg {reslice_out_tmp} "
+                    f"-r {reslice_transforms} "
+                    f"{common_flags}"
+                ).strip()
+                g.execute(reslice_cmd, my_fixed=itk_fixed, my_seg=itk_to_reslice)
+                resliced_sitk: sitk.Image = sitk.ReadImage(reslice_out_tmp)
+            finally:
+                if os.path.exists(reslice_out_tmp):
+                    os.unlink(reslice_out_tmp)
             if resliced_sitk.GetPixelID() != reslice_pixel_id:
                 resliced_sitk = sitk.Cast(resliced_sitk, reslice_pixel_id)
             resliced_image = ImageWrapper(resliced_sitk)
@@ -424,18 +432,26 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         logger.info("Reslicing segmentation ...")
         t2 = time()
 
-        reslice_cmd = (
-            f"-rf my_fixed "
-            f"-ri LABEL {opts.label_interpolation} "
-            f"-rm my_seg my_resliced "
-            f"-r my_warp my_affine "
-            f"{common_flags}"
-        ).strip()
-
-        logger.debug(f"Greedy reslice command: {reslice_cmd}")
-        g.execute(reslice_cmd, my_fixed=itk_fixed, my_seg=itk_to_reslice, my_resliced=None)
-
-        resliced_sitk: sitk.Image = g['my_resliced']
+        # The C++ Greedy3D binding does not populate the None-placeholder kwarg
+        # for reslice output.  Write only the output to a temp file.
+        # my_warp and my_affine are kept as named context references in the
+        # same Greedy3D instance so their transform semantics are preserved.
+        fd_out, reslice_out_tmp = tempfile.mkstemp(suffix=".nii.gz")
+        os.close(fd_out)
+        try:
+            reslice_cmd = (
+                f"-rf my_fixed "
+                f"-ri LABEL {opts.label_interpolation} "
+                f"-rm my_seg {reslice_out_tmp} "
+                f"-r my_warp my_affine "
+                f"{common_flags}"
+            ).strip()
+            logger.debug(f"Greedy reslice command: {reslice_cmd}")
+            g.execute(reslice_cmd, my_fixed=itk_fixed, my_seg=itk_to_reslice)
+            resliced_sitk: sitk.Image = sitk.ReadImage(reslice_out_tmp)
+        finally:
+            if os.path.exists(reslice_out_tmp):
+                os.unlink(reslice_out_tmp)
         # Greedy LABEL reslice may return a different pixel type (e.g. float64).
         # Cast back to the original segmentation pixel type so downstream
         # JoinSeriesImageFilter calls don't fail on type mismatches.
