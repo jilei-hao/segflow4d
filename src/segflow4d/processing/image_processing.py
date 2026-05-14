@@ -1,3 +1,4 @@
+import numpy as np
 import SimpleITK as sitk
 from segflow4d.utility.image_helper.image_helper_factory import create_image_helper
 from segflow4d.common.types.interpolation_type import InterpolationType
@@ -70,3 +71,148 @@ def create_high_res_mask(ref_seg_image: ImageWrapper, low_res_mask: ImageWrapper
     image_helper = create_image_helper()
     high_res_mask = image_helper.resample_to_reference(low_res_mask, ref_seg_image, interpolation=InterpolationType.NEAREST)
     return high_res_mask
+
+
+def compute_union_bbox(masks: list[ImageWrapper], padding_voxels: int) -> tuple[list[int], list[int]]:
+    """
+    Compute the union bounding box of all non-zero voxels across a list of masks,
+    padded by ``padding_voxels`` on each side and clamped to image extents.
+
+    All masks must share the same grid (size); spacing/direction/origin are not
+    checked because the result is expressed in voxel index space.
+
+    Args:
+        masks: List of label masks. Any non-zero voxel is treated as foreground.
+        padding_voxels: Number of voxels to pad on each side of the union bbox.
+
+    Returns:
+        Tuple ``(start, size)`` in ITK index space (x, y, z order for 3-D inputs).
+
+    Raises:
+        ValueError: If ``masks`` is empty, every mask is empty, masks have
+            mismatched grids, or ``padding_voxels`` is negative.
+    """
+    if padding_voxels < 0:
+        raise ValueError(f"padding_voxels must be >= 0, got {padding_voxels}")
+    if not masks:
+        raise ValueError("masks list is empty")
+
+    reference_size: tuple | None = None
+    for i, m in enumerate(masks):
+        if m is None or m.get_data() is None:
+            raise ValueError(f"masks[{i}] has no image data")
+        size = m.get_data().GetSize()
+        if reference_size is None:
+            reference_size = size
+        elif size != reference_size:
+            raise ValueError(
+                f"masks[{i}] size {size} does not match masks[0] size {reference_size}"
+            )
+
+    assert reference_size is not None
+    dim = len(reference_size)
+    union_lo: list[int] | None = None
+    union_hi: list[int] | None = None  # exclusive
+
+    stats = sitk.LabelShapeStatisticsImageFilter()
+
+    for m in masks:
+        data = sitk.Cast(m.get_data(), sitk.sitkUInt32)
+        stats.Execute(data)
+        for label in stats.GetLabels():
+            if label == 0:
+                continue
+            bbox = stats.GetBoundingBox(label)  # (x, y, z, sx, sy, sz)
+            lo = list(bbox[:dim])
+            sz = list(bbox[dim:2 * dim])
+            hi = [lo[k] + sz[k] for k in range(dim)]
+            if union_lo is None:
+                union_lo, union_hi = lo, hi
+            else:
+                union_lo = [min(union_lo[k], lo[k]) for k in range(dim)]
+                union_hi = [max(union_hi[k], hi[k]) for k in range(dim)]
+
+    if union_lo is None or union_hi is None:
+        raise ValueError("every mask in the list is empty (no foreground voxels)")
+
+    start = [max(0, union_lo[k] - padding_voxels) for k in range(dim)]
+    end = [min(reference_size[k], union_hi[k] + padding_voxels) for k in range(dim)]
+    size = [end[k] - start[k] for k in range(dim)]
+    return start, size
+
+
+def crop_to_bbox(image: ImageWrapper, start: list[int], size: list[int]) -> ImageWrapper:
+    """
+    Extract an index-space region from ``image``.
+
+    Spacing and direction are preserved; the origin shifts so the sub-volume
+    retains its physical-space location. No resampling occurs.
+
+    Args:
+        image: Input image.
+        start: Lower-corner index, length matches image dimension.
+        size: Region size in voxels.
+
+    Returns:
+        Cropped image.
+    """
+    data = image.get_data()
+    if data is None:
+        raise ValueError("image has no data")
+    roi = sitk.RegionOfInterestImageFilter()
+    roi.SetSize(list(size))
+    roi.SetIndex(list(start))
+    return ImageWrapper(roi.Execute(data))
+
+
+def uncrop_to_reference(
+    cropped: ImageWrapper,
+    reference: ImageWrapper,
+    start: list[int],
+    fill_value: float = 0,
+) -> ImageWrapper:
+    """
+    Paste a cropped sub-volume back into the reference's full frame.
+
+    The output has the reference's size/spacing/origin/direction and the
+    cropped pixel type. Voxels outside the pasted region are set to
+    ``fill_value`` (default 0).
+
+    Args:
+        cropped: Cropped image (typically produced by ``crop_to_bbox``).
+        reference: Image whose grid the output should match.
+        start: Lower-corner index where ``cropped`` is pasted into the
+            reference frame.
+        fill_value: Value for voxels outside the pasted region.
+
+    Returns:
+        Image with the reference's grid and the cropped content pasted at
+        ``start``.
+    """
+    cropped_data = cropped.get_data()
+    reference_data = reference.get_data()
+    if cropped_data is None:
+        raise ValueError("cropped image has no data")
+    if reference_data is None:
+        raise ValueError("reference image has no data")
+
+    ref_size = list(reference_data.GetSize())
+    pixel_id = cropped_data.GetPixelID()
+
+    if fill_value == 0:
+        dest = sitk.Image(ref_size, pixel_id)
+    else:
+        # sitk.Image has no scalar-fill constructor — route through numpy.
+        zyx_shape = list(reversed(ref_size))
+        sample = sitk.GetArrayFromImage(sitk.Image([1] * len(ref_size), pixel_id))
+        dest = sitk.GetImageFromArray(np.full(zyx_shape, fill_value, dtype=sample.dtype))
+
+    dest.SetSpacing(reference_data.GetSpacing())
+    dest.SetOrigin(reference_data.GetOrigin())
+    dest.SetDirection(reference_data.GetDirection())
+
+    paste = sitk.PasteImageFilter()
+    paste.SetSourceIndex([0] * len(cropped_data.GetSize()))
+    paste.SetSourceSize(list(cropped_data.GetSize()))
+    paste.SetDestinationIndex(list(start))
+    return ImageWrapper(paste.Execute(dest, cropped_data))
