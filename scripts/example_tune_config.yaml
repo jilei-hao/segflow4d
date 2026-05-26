@@ -1,0 +1,31 @@
+# Example tuner dataset config for scripts/tune_registration.py.
+#
+# Each case is a single (moving, fixed) pair plus a ground-truth
+# segmentation on the fixed side.  The tuner runs direct
+# ref -> target registration for every case, reslices `moving_seg`
+# into the fixed frame, and scores the result against `fixed_seg_gt`.
+#
+# Pick 3-5 cases that span the range of motion / deformation in your
+# dataset.  More cases = more reliable objective but slower trials.
+# Fewer cases (1-2) = fast iteration but risk overfitting to one pair.
+#
+# All paths are absolute or relative to the cwd you launch the tuner from.
+
+cases:
+  - name: subj01_t00_to_t05
+    moving_image: /data/subj01/image_tp00.nii.gz
+    fixed_image:  /data/subj01/image_tp05.nii.gz
+    moving_seg:   /data/subj01/seg_tp00.nii.gz
+    fixed_seg_gt: /data/subj01/seg_tp05_gt.nii.gz
+
+  - name: subj01_t00_to_t10
+    moving_image: /data/subj01/image_tp00.nii.gz
+    fixed_image:  /data/subj01/image_tp10.nii.gz
+    moving_seg:   /data/subj01/seg_tp00.nii.gz
+    fixed_seg_gt: /data/subj01/seg_tp10_gt.nii.gz
+
+  - name: subj02_t00_to_t08
+    moving_image: /data/subj02/image_tp00.nii.gz
+    fixed_image:  /data/subj02/image_tp08.nii.gz
+    moving_seg:   /data/subj02/seg_tp00.nii.gz
+    fixed_seg_gt: /data/subj02/seg_tp08_gt.nii.gz

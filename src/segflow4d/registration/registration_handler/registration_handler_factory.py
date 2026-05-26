@@ -13,5 +13,8 @@ class RegistrationHandlerFactory:
             case 'greedy':
                 from segflow4d.registration.registration_handler.greedy.greedy_registration_handler import GreedyRegistrationHandler
                 return GreedyRegistrationHandler()
+            case 'ants':
+                from segflow4d.registration.registration_handler.ants.ants_registration_handler import AntsRegistrationHandler
+                return AntsRegistrationHandler()
             case _:
                 raise ValueError(f"Unknown registration backend: {backend}")
