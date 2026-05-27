@@ -6,10 +6,13 @@ sampler.  Objective is a composite of Dice and mean surface distance:
 
     composite = mean_dice - lambda_surface * mean_msd_mm        (maximize)
 
-Only the *high-tier* parameters are tuned (see CLAUDE notes / discussion
-in the design doc).  Schedule lists are tuned via a single integer
-``iter_multiplier`` applied to a fixed schedule shape; FireANTs
-``scales`` is fixed at ``[4, 2, 1]``.
+Only the *core* parameters are tuned (loss/metric and smoothing sigmas).
+Schedule lists and scales are pinned to a fixed default so trials run at
+predictable cost:
+
+* FireANTs / Greedy: ``scales=[4, 2, 1]`` with iterations
+  ``[200, 100, 50]``.
+* ANTs: ``reg_iterations=(50, 25, 0)``.
 
 Usage
 -----
@@ -66,6 +69,15 @@ class Case:
     fixed_image: str
     moving_seg: str
     fixed_seg_gt: str
+    # Labels present in BOTH moving_seg and fixed_seg_gt (background excluded).
+    # Populated by load_cases; passed to evaluate_segmentation so labels that
+    # exist on only one side don't drag MSD to the empty-side clamp value.
+    labels: tuple[int, ...] | None = None
+
+
+def _labels_in(path: str) -> set[int]:
+    arr = sitk.GetArrayFromImage(sitk.ReadImage(path))
+    return {int(v) for v in np.unique(arr) if int(v) != 0}
 
 
 def load_cases(config_path: str) -> list[Case]:
@@ -101,24 +113,36 @@ def load_cases(config_path: str) -> list[Case]:
             if not os.path.exists(path):
                 raise FileNotFoundError(f"{case.name}: {label} not found: {path}")
 
+    for case in cases:
+        moving_labels = _labels_in(case.moving_seg)
+        fixed_labels = _labels_in(case.fixed_seg_gt)
+        shared = moving_labels & fixed_labels
+        only_moving = moving_labels - fixed_labels
+        only_fixed = fixed_labels - moving_labels
+        case.labels = tuple(sorted(shared))
+        logger.info(
+            f"{case.name}: evaluating labels {case.labels} "
+            f"(moving-only: {sorted(only_moving) or 'none'}, "
+            f"fixed-only: {sorted(only_fixed) or 'none'})"
+        )
+        if not case.labels:
+            logger.warning(
+                f"{case.name}: moving_seg and fixed_seg_gt share no labels; "
+                f"this case will produce degenerate metrics."
+            )
+
     return cases
 
 
 # ---------------------------------------------------------------------------
 # Per-backend search spaces
 # ---------------------------------------------------------------------------
-def _fireants_schedule(iter_multiplier: int) -> list[int]:
-    # Fixed shape [4x, 2x, x] over scales=[4, 2, 1] (coarse->fine).
-    return [iter_multiplier * 4, iter_multiplier * 2, iter_multiplier]
-
-
-def _greedy_schedule(iter_multiplier: int) -> list[int]:
-    return [iter_multiplier * 4, iter_multiplier * 2, iter_multiplier]
-
-
-def _ants_schedule(iter_multiplier: int) -> tuple[int, ...]:
-    # ANTs schedules conventionally end at 0 at the finest level.
-    return (iter_multiplier, iter_multiplier // 2, 0)
+# Schedules are pinned (not tuned) to keep trial cost predictable.  Shape
+# follows the prior log-uniform sweep at iter_multiplier=50.
+_FIREANTS_SCALES = [4, 2, 1]
+_FIREANTS_ITERATIONS = [200, 100, 50]
+_GREEDY_ITERATIONS = [100, 50, 25]
+_ANTS_ITERATIONS = (100, 50, 25)
 
 
 def sample_fireants_params(trial) -> dict[str, Any]:
@@ -127,13 +151,12 @@ def sample_fireants_params(trial) -> dict[str, Any]:
         "loss_type": loss_type,
         "smooth_grad_sigma_mm": trial.suggest_float("smooth_grad_sigma_mm", 0.5, 6.0, log=True),
         "smooth_warp_sigma_mm": trial.suggest_float("smooth_warp_sigma_mm", 0.25, 3.0, log=True),
-        "scales": [4, 2, 1],
+        "scales": list(_FIREANTS_SCALES),
+        "deformable_iterations": list(_FIREANTS_ITERATIONS),
+        # Affine schedule mirrors deformable so list lengths match scales
+        # (FireantsRegistrationOptions enforces this).
+        "affine_iterations": list(_FIREANTS_ITERATIONS),
     }
-    iter_mult = trial.suggest_int("iter_multiplier", 25, 200, log=True)
-    params["deformable_iterations"] = _fireants_schedule(iter_mult)
-    # Affine schedule is not tuned; mirror the deformable shape so list lengths
-    # match scales (FireantsRegistrationOptions enforces this).
-    params["affine_iterations"] = _fireants_schedule(iter_mult)
     if loss_type == "cc":
         params["cc_kernel_size"] = trial.suggest_categorical("cc_kernel_size", [3, 5, 7])
     return params
@@ -145,10 +168,9 @@ def sample_greedy_params(trial) -> dict[str, Any]:
         "metric": metric,
         "smooth_sigma_pre_mm": trial.suggest_float("smooth_sigma_pre_mm", 0.5, 4.0, log=True),
         "smooth_sigma_post_mm": trial.suggest_float("smooth_sigma_post_mm", 0.1, 2.0, log=True),
+        "deformable_iterations": list(_GREEDY_ITERATIONS),
+        "affine_iterations": list(_GREEDY_ITERATIONS),
     }
-    iter_mult = trial.suggest_int("iter_multiplier", 25, 200, log=True)
-    params["deformable_iterations"] = _greedy_schedule(iter_mult)
-    params["affine_iterations"] = _greedy_schedule(iter_mult)
     if metric == "NCC":
         r = trial.suggest_categorical("metric_radius", [1, 2, 3, 4])
         params["metric_radius"] = [r, r, r]
@@ -163,9 +185,8 @@ def sample_ants_params(trial) -> dict[str, Any]:
         "metric": trial.suggest_categorical("metric", ["CC", "MI", "mattes", "GC"]),
         "grad_step": trial.suggest_float("grad_step", 0.05, 0.5, log=True),
         "flow_sigma": trial.suggest_float("flow_sigma", 1.0, 6.0),
+        "reg_iterations": tuple(_ANTS_ITERATIONS),
     }
-    iter_mult = trial.suggest_int("iter_multiplier", 10, 80, log=True)
-    params["reg_iterations"] = _ants_schedule(iter_mult)
     return params
 
 
@@ -241,7 +262,12 @@ def evaluate_case(
             f"{case.name}: prediction shape {pred_arr.shape} != ground truth shape {gt_arr.shape}"
         )
 
-    val = evaluate_segmentation(target=pred_arr, ref=gt_arr, spacing=pred_spacing)
+    val = evaluate_segmentation(
+        target=pred_arr,
+        ref=gt_arr,
+        spacing=pred_spacing,
+        labels=case.labels,
+    )
     dice = val.macro_avg.dice
     msd = val.macro_avg.msd
     if not np.isfinite(msd):

@@ -60,17 +60,25 @@ Higher composite is better; Optuna maximises it.
 
 ### Search spaces
 
-Only **high-tier** parameters are tuned (those that move Dice meaningfully
-on typical 4D medical data). Low-tier knobs like learning rates, jitter,
-shrink factors, threads, and seeds are left at backend defaults.
+Only **core** parameters are tuned (loss/metric and smoothing sigmas) —
+the knobs that move Dice meaningfully on typical 4D medical data. Lower-
+tier knobs like learning rates, jitter, shrink factors, threads, and seeds
+are left at backend defaults.
 
-Schedule lists are handled with a single integer multiplier on a fixed
-shape:
+Schedule lists and scales are **pinned** (not tuned) so trial cost is
+predictable. They follow the prior log-uniform sweep at
+`iter_multiplier=50`:
 
-* FireANTs / Greedy: `deformable_iterations = [4x, 2x, x]` over scales
-  `[4, 2, 1]`.
-* ANTs: `reg_iterations = (x, x/2, 0)` (ANTs schedules conventionally
-  terminate at 0 on the finest level).
+* FireANTs: `scales=[4, 2, 1]`, `deformable_iterations = affine_iterations
+  = [200, 100, 50]`.
+* Greedy: `deformable_iterations = affine_iterations = [200, 100, 50]`.
+* ANTs: `reg_iterations = (50, 25, 0)` (the finest level terminates at 0
+  by ANTs convention).
+
+If you need a different cost/quality trade-off, edit the
+`_FIREANTS_ITERATIONS`, `_GREEDY_ITERATIONS`, or `_ANTS_ITERATIONS`
+constants near the top of `sample_*_params` in
+`scripts/tune_registration.py`.
 
 | Backend | Parameter | Range / choices |
 |---|---|---|
@@ -78,17 +86,14 @@ shape:
 |              | `cc_kernel_size` | {3, 5, 7} (conditional on `loss_type=cc`) |
 |              | `smooth_grad_sigma_mm` | [0.5, 6.0], log-uniform |
 |              | `smooth_warp_sigma_mm` | [0.25, 3.0], log-uniform |
-|              | `iter_multiplier` | [25, 200], log-uniform int |
 | **greedy**   | `metric` | {`NCC`, `SSD`, `NMI`} |
 |              | `metric_radius` | {1, 2, 3, 4} (conditional on `metric=NCC`) |
 |              | `smooth_sigma_pre_mm` | [0.5, 4.0], log-uniform |
 |              | `smooth_sigma_post_mm` | [0.1, 2.0], log-uniform |
-|              | `iter_multiplier` | [25, 200], log-uniform int |
 | **ants**     | `transform_type` | {`SyN`, `SyNRA`, `SyNOnly`, `SyNCC`} |
 |              | `metric` | {`CC`, `MI`, `mattes`, `GC`} |
 |              | `grad_step` | [0.05, 0.5], log-uniform |
 |              | `flow_sigma` | [1.0, 6.0] |
-|              | `iter_multiplier` | [10, 80], log-uniform int |
 
 ### Sampler and pruner
 
@@ -204,8 +209,8 @@ registration_backend_options:
   smooth_grad_sigma_mm: 2.3
   smooth_warp_sigma_mm: 0.8
   scales: [4, 2, 1]
-  affine_iterations: [400, 200, 100]
-  deformable_iterations: [400, 200, 100]
+  affine_iterations: [200, 100, 50]
+  deformable_iterations: [200, 100, 50]
 
 propagation_strategy_combo: direct_star      # or sequential_star / sasd_star
 ```
