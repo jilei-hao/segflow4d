@@ -42,8 +42,16 @@ test = [
 greedy = [
     "picsl-greedy",
 ]
+ants = [
+    "antspyx",
+]
+tune = [
+    "optuna>=3.4",
+]
 all = [
     "picsl-greedy",
+    "antspyx",
+    "optuna>=3.4",
 ]
 
 [tool.pytest.ini_options]
@@ -54,6 +62,7 @@ markers = [
     "slow: tests that take a long time to run",
     "requires_real_data: tests that require real patient data fixtures",
     "greedy: tests that require picsl-greedy (pip install segflow4d[greedy])",
+    "ants: tests that require antspyx (pip install segflow4d[ants])",
 ]
 
 [tool.setuptools.packages.find]

@@ -6,7 +6,7 @@ import threading
 from segflow4d.common.types.image_wrapper import ImageWrapper
 from segflow4d.common.types.propagation_input import PropagationInput
 from segflow4d.common.types.propagation_options import PropagationOptions
-from segflow4d.common.types.propagation_strategy_name import PropagationStrategyName
+from segflow4d.common.types.propagation_strategy_name import PropagationStrategyName, PropagationStrategyCombo
 from segflow4d.common.types.tp_data import TPData
 from segflow4d.propagation.tp_partition_input import TPPartitionInput
 from segflow4d.propagation.propagation_strategy.propagation_strategy_factory import PropagationStrategyFactory
@@ -80,56 +80,65 @@ class PropagationPipeline:
         result = dict[int, TPData]()
 
         try:
-            # ===== LOW RES PROPAGATION =====
-            logger.debug(f"[Thread {thread_id}] Starting low-res propagation")
             combo = options.propagation_strategy_combo
-            if combo == "sequential_star":
-                strategy_lr_name = PropagationStrategyName.SEQUENTIAL
-            elif combo == "sasd_star":
-                strategy_lr_name = PropagationStrategyName.SASD
+
+            # ===== LOW RES PROPAGATION (skipped for direct_star) =====
+            if combo == PropagationStrategyCombo.DIRECT_STAR:
+                logger.info(f"[Thread {thread_id}] direct_star combo: skipping low-res mask propagation")
+                strategy_hr_name = PropagationStrategyName.STAR_DIRECT
+                # Free unused low-res inputs we built above
+                tp_input_data = None
             else:
-                raise ValueError(f"Unknown propagation_strategy_combo: {combo!r}")
-            strategy_lr = PropagationStrategyFactory.create_propagation_strategy(strategy_lr_name)
+                logger.debug(f"[Thread {thread_id}] Starting low-res propagation")
+                if combo == PropagationStrategyCombo.SEQUENTIAL_STAR:
+                    strategy_lr_name = PropagationStrategyName.SEQUENTIAL
+                elif combo == PropagationStrategyCombo.SASD_STAR:
+                    strategy_lr_name = PropagationStrategyName.SASD
+                else:
+                    raise ValueError(f"Unknown propagation_strategy_combo: {combo!r}")
+                strategy_lr = PropagationStrategyFactory.create_propagation_strategy(strategy_lr_name)
 
-            # run low-res propagation for masks
-            propagated_data_lr = strategy_lr.propagate(tp_input_data, options)
+                # run low-res propagation for masks
+                propagated_data_lr = strategy_lr.propagate(tp_input_data, options)
 
-            # update propagated results back to tp_partition
-            for tp in tp_list:
-                resliced_mask = propagated_data_lr[tp].resliced_image
-                if resliced_mask is None:
-                    raise RuntimeError(f"Resliced mask for time point {tp} is None.")
-                
-                tp_data[tp].mask_low_res = resliced_mask
+                # update propagated results back to tp_partition
+                for tp in tp_list:
+                    resliced_mask = propagated_data_lr[tp].resliced_image
+                    if resliced_mask is None:
+                        raise RuntimeError(f"Resliced mask for time point {tp} is None.")
 
-                high_res_mask = create_high_res_mask(ref_seg_image=ref_input.seg_ref, low_res_mask=resliced_mask)
-                tp_data[tp].mask_high_res = high_res_mask
-                
-                if options.debug:
-                    if resliced_mask is not None:
-                        dir_debug_mask_lr = os.path.join(options.debug_output_directory, "mask-lr")
-                        os.makedirs(dir_debug_mask_lr, exist_ok=True)
-                        async_writer.submit_image(
-                            resliced_mask,
-                            os.path.join(dir_debug_mask_lr, f"mask-lr_tp-{tp:03d}.nii.gz")
-                        )
-                    if high_res_mask is not None:
-                        dir_debug_mask_hr = os.path.join(options.debug_output_directory, "mask-hr")
-                        os.makedirs(dir_debug_mask_hr, exist_ok=True)
-                        async_writer.submit_image(
-                            high_res_mask,
-                            os.path.join(dir_debug_mask_hr, f"mask-hr_tp-{tp:03d}.nii.gz")
-                        )
+                    tp_data[tp].mask_low_res = resliced_mask
 
-            logger.debug(f"[Thread {thread_id}] Low-res propagation completed")
-            
-            # Clear references for next stage
-            tp_input_data = None
-            propagated_data_lr = None
+                    high_res_mask = create_high_res_mask(ref_seg_image=ref_input.seg_ref, low_res_mask=resliced_mask)
+                    tp_data[tp].mask_high_res = high_res_mask
+
+                    if options.debug:
+                        if resliced_mask is not None:
+                            dir_debug_mask_lr = os.path.join(options.debug_output_directory, "mask-lr")
+                            os.makedirs(dir_debug_mask_lr, exist_ok=True)
+                            async_writer.submit_image(
+                                resliced_mask,
+                                os.path.join(dir_debug_mask_lr, f"mask-lr_tp-{tp:03d}.nii.gz")
+                            )
+                        if high_res_mask is not None:
+                            dir_debug_mask_hr = os.path.join(options.debug_output_directory, "mask-hr")
+                            os.makedirs(dir_debug_mask_hr, exist_ok=True)
+                            async_writer.submit_image(
+                                high_res_mask,
+                                os.path.join(dir_debug_mask_hr, f"mask-hr_tp-{tp:03d}.nii.gz")
+                            )
+
+                logger.debug(f"[Thread {thread_id}] Low-res propagation completed")
+
+                # Clear references for next stage
+                tp_input_data = None
+                propagated_data_lr = None
+
+                strategy_hr_name = PropagationStrategyName.STAR
 
             # ===== HIGH RES PROPAGATION =====
-            logger.debug(f"[Thread {thread_id}] Starting high-res propagation")
-            strategy_hr = PropagationStrategyFactory.create_propagation_strategy(PropagationStrategyName.STAR)
+            logger.debug(f"[Thread {thread_id}] Starting high-res propagation ({strategy_hr_name})")
+            strategy_hr = PropagationStrategyFactory.create_propagation_strategy(strategy_hr_name)
 
             # prepare input data for high res propagation
             # IMPORTANT: Deep copy ImageWrapper to ensure thread isolation

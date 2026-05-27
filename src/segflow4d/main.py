@@ -91,9 +91,42 @@ def parse_arguments():
     parser.add_argument('--label-interpolation', type=str, default=None,
                         help='Smoothing parameter for greedy LABEL reslice interpolation, e.g. "0.2vox" or "0.5mm" (default: 0.2vox)')
 
+    # Classic ANTs (antspyx) backend options
+    parser.add_argument('--ants-transform-type', type=str, default=None,
+                        help='ants.registration type_of_transform preset (default: SyN). '
+                             'Common values: Rigid, Affine, SyN, SyNRA, SyNOnly, SyNCC, '
+                             'antsRegistrationSyN[s].')
+    parser.add_argument('--ants-metric', type=str, default=None,
+                        choices=['CC', 'MI', 'meansquares', 'demons', 'mattes', 'GC'],
+                        help='Similarity metric for ants backend (default: mattes)')
+    parser.add_argument('--ants-aff-iterations', type=int, nargs='+', default=None,
+                        help='ANTs affine iteration schedule, coarse to fine '
+                             '(e.g. --ants-aff-iterations 2100 1200 1200 100)')
+    parser.add_argument('--ants-reg-iterations', type=int, nargs='+', default=None,
+                        help='ANTs deformable (SyN) iteration schedule, coarse to fine '
+                             '(e.g. --ants-reg-iterations 40 20 0)')
+    parser.add_argument('--ants-grad-step', type=float, default=None,
+                        help='Gradient descent step size for ANTs SyN (default: 0.1)')
+    parser.add_argument('--ants-flow-sigma', type=float, default=None,
+                        help='Update-field regularising Gaussian sigma for ANTs SyN (default: 3.0)')
+    parser.add_argument('--ants-total-sigma', type=float, default=None,
+                        help='Total-field regularising Gaussian sigma for ANTs SyN (default: 0.0)')
+    parser.add_argument('--ants-syn-sampling', type=int, default=None,
+                        help='Sampling parameter for the deformable metric (default: 32)')
+    parser.add_argument('--ants-label-interpolation', type=str, default=None,
+                        choices=['genericLabel', 'nearestNeighbor', 'multiLabel'],
+                        help='Interpolator for ants.apply_transforms on label maps (default: genericLabel)')
+    parser.add_argument('--ants-threads', type=int, default=None,
+                        help='Per-worker ITK thread cap for the ants backend '
+                             '(sets ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS)')
+    parser.add_argument('--ants-random-seed', type=int, default=None,
+                        help='Random seed for ants.registration sampling')
+
     parser.add_argument('--propagation-strategy-combo', type=str, default='sequential_star',
-                        choices=['sequential_star', 'sasd_star'],
-                        help='Strategy combo for lowres+highres stages (default: sequential_star)')
+                        choices=['sequential_star', 'sasd_star', 'direct_star'],
+                        help='Strategy combo for lowres+highres stages (default: sequential_star). '
+                             'direct_star skips the low-res mask phase and runs direct '
+                             'ref->target registration only (baseline for comparisons).')
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
@@ -227,6 +260,29 @@ def main():
             cli_backend_options['use_float'] = args.greedy_use_float
         if args.label_interpolation is not None:
             cli_backend_options['label_interpolation'] = args.label_interpolation
+        # Classic ANTs (antspyx) options
+        if args.ants_transform_type is not None:
+            cli_backend_options['transform_type'] = args.ants_transform_type
+        if args.ants_metric is not None:
+            cli_backend_options['metric'] = args.ants_metric
+        if args.ants_aff_iterations is not None:
+            cli_backend_options['aff_iterations'] = tuple(args.ants_aff_iterations)
+        if args.ants_reg_iterations is not None:
+            cli_backend_options['reg_iterations'] = tuple(args.ants_reg_iterations)
+        if args.ants_grad_step is not None:
+            cli_backend_options['grad_step'] = args.ants_grad_step
+        if args.ants_flow_sigma is not None:
+            cli_backend_options['flow_sigma'] = args.ants_flow_sigma
+        if args.ants_total_sigma is not None:
+            cli_backend_options['total_sigma'] = args.ants_total_sigma
+        if args.ants_syn_sampling is not None:
+            cli_backend_options['syn_sampling'] = args.ants_syn_sampling
+        if args.ants_label_interpolation is not None:
+            cli_backend_options['label_interpolation'] = args.ants_label_interpolation
+        if args.ants_threads is not None:
+            cli_backend_options['threads'] = args.ants_threads
+        if args.ants_random_seed is not None:
+            cli_backend_options['random_seed'] = args.ants_random_seed
 
         input_factory.set_options(
             lowres_factor=args.lowres_factor,
