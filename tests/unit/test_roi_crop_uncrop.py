@@ -95,6 +95,58 @@ class TestComputeUnionBbox:
         with pytest.raises(ValueError, match="padding_voxels"):
             compute_union_bbox([m], padding_voxels=-1)
 
+    def test_min_size_expands_small_bbox_symmetrically(self):
+        # 1-voxel foreground at the centre of a 64-voxel cube; padding=0,
+        # min_size=10 should grow to size 10 in each dim centred on the voxel.
+        mask = _make_mask((64, 64, 64), (slice(32, 33), slice(32, 33), slice(32, 33)))
+        start, size = compute_union_bbox([mask], padding_voxels=0, min_size_voxels=10)
+        assert size == [10, 10, 10]
+        # The single foreground voxel at index 32 must still lie inside the bbox.
+        for k in range(3):
+            assert start[k] <= 32 < start[k] + size[k]
+
+    def test_min_size_pushes_off_corner(self):
+        # Foreground touches the lower corner; symmetric expansion would go
+        # negative, so the extra must spill onto the opposite side.
+        mask = _make_mask((64, 64, 64), (slice(0, 1), slice(0, 1), slice(0, 1)))
+        start, size = compute_union_bbox([mask], padding_voxels=0, min_size_voxels=8)
+        assert start == [0, 0, 0]
+        assert size == [8, 8, 8]
+
+    def test_min_size_pushes_off_upper_edge(self):
+        # Foreground at the upper edge; symmetric expansion past size-1 must
+        # spill back toward the origin.
+        mask = _make_mask((32, 32, 32), (slice(31, 32), slice(31, 32), slice(31, 32)))
+        start, size = compute_union_bbox([mask], padding_voxels=0, min_size_voxels=6)
+        assert size == [6, 6, 6]
+        for k in range(3):
+            assert start[k] + size[k] == 32
+
+    def test_min_size_clamped_when_image_smaller(self):
+        # The image itself is 8 voxels in Z; min_size=16 cannot be satisfied
+        # there. We should get the full Z extent (8) and the requested 16 in
+        # the larger dims.
+        mask = _make_mask((8, 32, 32), (slice(2, 5), slice(10, 13), slice(10, 13)))
+        start, size = compute_union_bbox([mask], padding_voxels=0, min_size_voxels=16)
+        # ITK (x, y, z) ordering — image_size_zyx = (8, 32, 32) -> ITK (32, 32, 8)
+        assert size[0] == 16
+        assert size[1] == 16
+        assert size[2] == 8  # capped by image
+
+    def test_min_size_no_op_when_bbox_already_large_enough(self):
+        # Padding alone already reaches 12 voxels per dim; min_size_voxels=8
+        # should change nothing.
+        mask = _make_mask((64, 64, 64), (slice(20, 24), slice(20, 24), slice(20, 24)))
+        start_no_min, size_no_min = compute_union_bbox([mask], padding_voxels=4)
+        start_min, size_min = compute_union_bbox([mask], padding_voxels=4, min_size_voxels=8)
+        assert start_no_min == start_min
+        assert size_no_min == size_min
+
+    def test_negative_min_size_raises(self):
+        m = _make_mask((16, 32, 32), (slice(4, 6), slice(4, 6), slice(4, 6)))
+        with pytest.raises(ValueError, match="min_size_voxels"):
+            compute_union_bbox([m], padding_voxels=0, min_size_voxels=-1)
+
     def test_works_on_multi_label_mask(self):
         """Union must cover all non-zero labels, not just label 1."""
         arr = np.zeros((16, 32, 32), dtype=np.int16)

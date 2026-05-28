@@ -122,6 +122,11 @@ def parse_arguments():
     parser.add_argument('--ants-random-seed', type=int, default=None,
                         help='Random seed for ants.registration sampling')
 
+    parser.add_argument('--roi-crop-padding-voxels', type=int, default=0,
+                        help='If > 0, crop the high-res image/mask/seg to the union bbox of '
+                             'the propagated low-res masks (padded by this many voxels) before '
+                             'the high-res registration, then uncrop the resliced segmentation '
+                             'back to the reference frame. 0 disables ROI cropping (default).')
     parser.add_argument('--propagation-strategy-combo', type=str, default='sequential_star',
                         choices=['sequential_star', 'sasd_star', 'direct_star'],
                         help='Strategy combo for lowres+highres stages (default: sequential_star). '
@@ -192,6 +197,7 @@ def main():
             debug_output_directory=config.get('debug_dir', ''),
             minimum_required_vram_gb=config.get('minimum_required_vram_gb', 0),
             propagation_strategy_combo=config.get('propagation_strategy_combo', 'sequential_star'),
+            roi_crop_padding_voxels=config.get('roi_crop_padding_voxels', 0),
             **backend_options
         )
         
@@ -294,6 +300,7 @@ def main():
             debug=args.debug,
             debug_output_directory=args.debug_dir,
             propagation_strategy_combo=args.propagation_strategy_combo,
+            roi_crop_padding_voxels=args.roi_crop_padding_voxels,
             **cli_backend_options
         )
 

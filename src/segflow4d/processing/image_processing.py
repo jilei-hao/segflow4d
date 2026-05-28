@@ -73,7 +73,11 @@ def create_high_res_mask(ref_seg_image: ImageWrapper, low_res_mask: ImageWrapper
     return high_res_mask
 
 
-def compute_union_bbox(masks: list[ImageWrapper], padding_voxels: int) -> tuple[list[int], list[int]]:
+def compute_union_bbox(
+    masks: list[ImageWrapper],
+    padding_voxels: int,
+    min_size_voxels: int = 0,
+) -> tuple[list[int], list[int]]:
     """
     Compute the union bounding box of all non-zero voxels across a list of masks,
     padded by ``padding_voxels`` on each side and clamped to image extents.
@@ -84,16 +88,23 @@ def compute_union_bbox(masks: list[ImageWrapper], padding_voxels: int) -> tuple[
     Args:
         masks: List of label masks. Any non-zero voxel is treated as foreground.
         padding_voxels: Number of voxels to pad on each side of the union bbox.
+        min_size_voxels: If > 0, each output dimension is grown symmetrically
+            (clamped to the image extent) so it reaches at least this many
+            voxels. If the image itself is smaller than ``min_size_voxels`` in
+            some dimension, the result is the full extent for that dimension.
 
     Returns:
         Tuple ``(start, size)`` in ITK index space (x, y, z order for 3-D inputs).
 
     Raises:
         ValueError: If ``masks`` is empty, every mask is empty, masks have
-            mismatched grids, or ``padding_voxels`` is negative.
+            mismatched grids, ``padding_voxels`` is negative, or
+            ``min_size_voxels`` is negative.
     """
     if padding_voxels < 0:
         raise ValueError(f"padding_voxels must be >= 0, got {padding_voxels}")
+    if min_size_voxels < 0:
+        raise ValueError(f"min_size_voxels must be >= 0, got {min_size_voxels}")
     if not masks:
         raise ValueError("masks list is empty")
 
@@ -137,6 +148,30 @@ def compute_union_bbox(masks: list[ImageWrapper], padding_voxels: int) -> tuple[
 
     start = [max(0, union_lo[k] - padding_voxels) for k in range(dim)]
     end = [min(reference_size[k], union_hi[k] + padding_voxels) for k in range(dim)]
+
+    # Symmetrically grow each dim to reach min_size_voxels, staying inside the
+    # image. If symmetric expansion would push past one side, the leftover is
+    # added to the other side. If the image itself is shorter than min_size in
+    # some dim, that dim ends up at the full image extent.
+    if min_size_voxels > 0:
+        for k in range(dim):
+            cur = end[k] - start[k]
+            if cur >= min_size_voxels:
+                continue
+            need = min_size_voxels - cur
+            left = need // 2
+            right = need - left
+            new_start = start[k] - left
+            new_end = end[k] + right
+            if new_start < 0:
+                new_end += -new_start
+                new_start = 0
+            if new_end > reference_size[k]:
+                new_start -= (new_end - reference_size[k])
+                new_end = reference_size[k]
+            start[k] = max(0, new_start)
+            end[k] = min(reference_size[k], new_end)
+
     size = [end[k] - start[k] for k in range(dim)]
     return start, size
 
