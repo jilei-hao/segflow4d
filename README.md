@@ -32,8 +32,9 @@ No GPU or CUDA toolkit required. Registration runs on CPU via `picsl-greedy`.
 
 Choose the installation track that matches your hardware:
 
-- **[GPU Installation](#gpu-installation-fireants-backend-1)** — CUDA-capable GPU required; faster registration using FireANTs
+- **[GPU Installation](#gpu-installation-fireants-backend-1)** — CUDA-capable GPU required; faster registration using FireANTs. **This is the production deployment track.**
 - **[CPU Installation](#cpu-installation-greedy-backend-1)** — no GPU required; simpler setup using the Greedy backend
+- **[Apple Silicon Installation](#apple-silicon-installation-fireants-mps-backend--dev-only)** — Mac dev boxes (M-series); FireANTs runs on the Metal (MPS) backend. **Dev-only convenience, not a production target.**
 
 ---
 
@@ -190,6 +191,64 @@ PyTorch installation step is needed.
 > **Note:** Registration will run entirely on CPU. Expect longer runtimes
 > compared to the GPU (FireANTs) backend. Set `registration_backend: greedy`
 > in your config file (see Configuration below).
+
+---
+
+### Apple Silicon Installation (FireANTs MPS backend) — dev only
+
+Apple-Silicon Macs (M-series) can run the FireANTs backend on the Metal (MPS)
+device. This is a **dev-box convenience** so the full pipeline runs locally
+without the CUDA box — **the production deployment target remains CUDA**
+(see [GPU Installation](#gpu-installation-fireants-backend-1)).
+
+The MPS Metal kernels live on a FireANTs **fork branch** and are *not* in
+upstream FireANTs. Do **not** use `segflow4d-install-fireants` here — that
+command builds the fused **CUDA** ops and requires `nvcc` + an NVIDIA GPU.
+Install the MPS branch manually instead.
+
+#### 1. Create a conda environment
+
+```bash
+conda create -n segflow4d python=3.10
+conda activate segflow4d
+```
+
+#### 2. Install SegFlow4D
+
+```bash
+pip install -e .
+```
+
+PyTorch's standard macOS arm64 wheel already ships MPS support — no special
+PyTorch install step is needed.
+
+#### 3. Install FireANTs from the MPS branch
+
+```bash
+pip install "git+https://github.com/jilei-hao/FireANTs.git@experiment/mps"
+```
+
+Or, for local development against a checkout:
+
+```bash
+git clone -b experiment/mps https://github.com/jilei-hao/FireANTs.git
+pip install -e FireANTs
+```
+
+The fused CUDA ops (`fireants_fused_ops`) are **not** built on this track — they
+are CUDA-only. The MPS path uses the Metal kernels included in the branch, so the
+`ModuleNotFoundError: No module named 'fireants_fused_ops'` troubleshooting note
+does not apply here.
+
+#### 4. Run
+
+Set `registration_backend: fireants` in your config (the default). SegFlow4D
+autodetects the accelerator and selects MPS when no CUDA device is present — no
+device flag is required.
+
+> **Note:** This branch is install-from-source and intentionally **unpinned**
+> and **unmerged** — it tracks dev-loop ergonomics, not a release. Keep the
+> production CUDA install on upstream FireANTs.
 
 ---
 
