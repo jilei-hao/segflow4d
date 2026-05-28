@@ -13,7 +13,12 @@ from segflow4d.propagation.propagation_strategy.propagation_strategy_factory imp
 from segflow4d.propagation.tp_partition import TPPartition
 from segflow4d.registration.registration_manager import RegistrationManager
 from segflow4d.utility.image_helper.image_helper_factory import create_image_helper
-from segflow4d.processing.image_processing import create_high_res_mask
+from segflow4d.processing.image_processing import (
+    create_high_res_mask,
+    compute_union_bbox,
+    crop_to_bbox,
+    uncrop_to_reference,
+)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from segflow4d.utility.file_writer import async_writer
 
@@ -140,18 +145,61 @@ class PropagationPipeline:
             logger.debug(f"[Thread {thread_id}] Starting high-res propagation ({strategy_hr_name})")
             strategy_hr = PropagationStrategyFactory.create_propagation_strategy(strategy_hr_name)
 
+            # --- Optional ROI cropping --------------------------------------
+            # Crop image/mask/seg_ref to the union bbox of all high-res masks
+            # before high-res registration. The bbox is shared across all TPs
+            # in this direction so the cropped images stay co-gridded. After
+            # propagation, the resliced segmentation is pasted back into the
+            # reference frame.
+            roi_crop_enabled = (
+                options.roi_crop_padding_voxels > 0
+                and combo != PropagationStrategyCombo.DIRECT_STAR
+            )
+            roi_crop_start: list[int] | None = None
+            roi_crop_size: list[int] | None = None
+            if roi_crop_enabled:
+                masks_for_bbox = [tp_data[tp].mask_high_res for tp in tp_list]
+                if all(m is not None for m in masks_for_bbox):
+                    roi_crop_start, roi_crop_size = compute_union_bbox(
+                        masks_for_bbox,
+                        padding_voxels=options.roi_crop_padding_voxels,
+                    )
+                    logger.info(
+                        f"[Thread {thread_id}] ROI crop bbox: start={roi_crop_start}, "
+                        f"size={roi_crop_size} (padding={options.roi_crop_padding_voxels})"
+                    )
+                else:
+                    logger.warning(
+                        f"[Thread {thread_id}] ROI cropping requested but some "
+                        f"high-res masks are missing; disabling for this direction."
+                    )
+                    roi_crop_enabled = False
+
             # prepare input data for high res propagation
             # IMPORTANT: Deep copy ImageWrapper to ensure thread isolation
             tp_input_data_hr = dict[int, TPData]()
             for tp in tp_list:
                 crnt_tp_data = tp_data[tp]
-                tp_input_data_hr[tp] = TPData(
-                    image=crnt_tp_data.image.deepcopy() if crnt_tp_data.image else None,
-                    mask=crnt_tp_data.mask_high_res.deepcopy() if crnt_tp_data.mask_high_res else None
-                )
+                image_hr = crnt_tp_data.image.deepcopy() if crnt_tp_data.image else None
+                mask_hr = crnt_tp_data.mask_high_res.deepcopy() if crnt_tp_data.mask_high_res else None
+                if roi_crop_enabled and roi_crop_start is not None and roi_crop_size is not None:
+                    if image_hr is not None:
+                        image_hr = crop_to_bbox(image_hr, roi_crop_start, roi_crop_size)
+                    if mask_hr is not None:
+                        mask_hr = crop_to_bbox(mask_hr, roi_crop_start, roi_crop_size)
+                tp_input_data_hr[tp] = TPData(image=image_hr, mask=mask_hr)
 
             tp_ref = tp_list[0]
-            tp_input_data_hr[tp_ref].resliced_image = ref_input.seg_ref.deepcopy()
+            seg_ref_hr = ref_input.seg_ref.deepcopy()
+            if roi_crop_enabled and roi_crop_start is not None and roi_crop_size is not None:
+                seg_ref_hr = crop_to_bbox(seg_ref_hr, roi_crop_start, roi_crop_size)
+                if ref_input.seg_mesh_ref is not None:
+                    logger.warning(
+                        f"[Thread {thread_id}] ROI cropping is enabled with a "
+                        f"reference mesh; mesh warping uses the cropped warp "
+                        f"field and may be inaccurate for vertices near the bbox."
+                    )
+            tp_input_data_hr[tp_ref].resliced_image = seg_ref_hr
             tp_input_data_hr[tp_ref].segmentation_mesh = ref_input.seg_mesh_ref.deepcopy() if ref_input.seg_mesh_ref else None
 
             # run high-res propagation for segmentations
@@ -186,6 +234,10 @@ class PropagationPipeline:
                 result[tp] = tp_data[tp].deepcopy()
                 resliced_image = propagated_data_hr[tp].resliced_image
                 if resliced_image is not None:
+                    if roi_crop_enabled and roi_crop_start is not None:
+                        resliced_image = uncrop_to_reference(
+                            resliced_image, ref_input.seg_ref, roi_crop_start
+                        )
                     result[tp].segmentation = resliced_image
                 resliced_mesh = propagated_data_hr[tp].segmentation_mesh
                 if resliced_mesh is not None:

@@ -11,10 +11,12 @@ import torch
 
 
 def pytest_runtest_setup(item):
-    """Auto-skip tests marked 'gpu' when CUDA is not available."""
+    """Auto-skip tests marked 'gpu' when no accelerator (CUDA or MPS) is available."""
     if any(item.iter_markers(name="gpu")):
-        if not torch.cuda.is_available():
-            pytest.skip("requires a CUDA-capable GPU")
+        has_cuda = torch.cuda.is_available()
+        has_mps = torch.backends.mps.is_available() and torch.backends.mps.is_built()
+        if not (has_cuda or has_mps):
+            pytest.skip("requires a CUDA or MPS accelerator")
 
 
 @pytest.fixture(autouse=True)

@@ -79,6 +79,7 @@ class PropagationInputFactory:
                     debug: bool = False, debug_output_directory: str = "",
                     minimum_required_vram_gb: int = 10,
                     propagation_strategy_combo: str = "sequential_star",
+                    roi_crop_padding_voxels: int = 0,
                     **kwargs) -> 'PropagationInputFactory':
         '''
         Sets the propagation options. *kwargs are reserved for configuring different registration backends.
@@ -94,7 +95,8 @@ class PropagationInputFactory:
             debug_output_directory=debug_output_directory,
             minimum_required_vram_gb=minimum_required_vram_gb,
             registration_backend_options=kwargs,
-            propagation_strategy_combo=propagation_strategy_combo
+            propagation_strategy_combo=propagation_strategy_combo,
+            roi_crop_padding_voxels=roi_crop_padding_voxels,
         )
 
         os.makedirs(output_directory, exist_ok=True)

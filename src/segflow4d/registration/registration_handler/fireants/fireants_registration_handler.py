@@ -15,6 +15,7 @@ import SimpleITK as sitk
 import numpy as np
 from segflow4d.utility.image_helper.image_helper_factory import create_image_helper
 from segflow4d.registration.registration_handler.fireants.gpu_mesh_warper import warp_mesh_vertices
+from segflow4d.utility import device_utils
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,16 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         logger.info("Initialized FireantsRegistrationHandler")
 
     def _cleanup_gpu(self):
-        """Force GPU memory cleanup for current device only"""
-        device_id = torch.cuda.current_device()
+        """Force device memory cleanup for the current accelerator."""
+        kind = device_utils.detect_device_kind()
+        device_id = device_utils.current_device_id(kind)
         gc.collect()
-        if torch.cuda.is_available():
+        if kind in ("cuda", "mps"):
             try:
-                torch.cuda.synchronize(device_id)  # Sync only current device
-                torch.cuda.empty_cache()
+                device_utils.synchronize(device_id, kind)
+                device_utils.empty_cache(kind)
             except Exception as e:
-                logger.warning(f"GPU cleanup warning on cuda:{device_id}: {e}")
+                logger.warning(f"Device cleanup warning on {device_utils.device_str(device_id, kind)}: {e}")
         gc.collect()
 
     def run_affine(self, img_fixed, img_moving, options):
@@ -40,9 +42,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
 
     def run_affine_only(self, img_fixed, img_moving, options: PropagationOptions, mask_fixed=None, mask_moving=None) -> TPData:
         """Run only the affine registration stage and return the affine matrix."""
-        device_id = torch.cuda.current_device()
-        device_str = f"cuda:{device_id}"
-        torch.cuda.set_device(device_id)
+        device_kind = device_utils.detect_device_kind()
+        device_id = device_utils.current_device_id(device_kind)
+        device_str = device_utils.device_str(device_id, device_kind)
+        device_utils.set_device(device_id, device_kind)
 
         if isinstance(options, dict):
             backend_options_dict = options.get('registration_backend_options', {})
@@ -73,7 +76,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             itk_mask_moving = mask_moving.get_data() if mask_moving is not None else None
 
             start_affine = time()
-            with torch.cuda.device(device_id):
+            with device_utils.device_context(device_id, device_kind):
                 fa_image_fixed = Image(itk_fixed, device=device_str)
                 fa_image_moving = Image(itk_moving, device=device_str)
                 if itk_mask_fixed is not None:
@@ -99,20 +102,21 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 affine_matrix = affine_reg.get_affine_matrix().detach().cpu().clone()
                 del affine_reg
             gc.collect()
-            torch.cuda.empty_cache()
+            device_utils.empty_cache(device_kind)
             logger.info(f"Affine-only registration completed in {time() - start_affine:.2f} seconds")
             return TPData(affine_matrix=affine_matrix.numpy().copy())
 
         except Exception as e:
-            logger.error(f"Affine-only registration failed on cuda:{device_id}: {e}", exc_info=True)
+            logger.error(f"Affine-only registration failed on {device_str}: {e}", exc_info=True)
             self._cleanup_gpu()
             raise
 
     def run_deformable_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, init_affine_matrix=None, mask_fixed=None, mask_moving=None) -> TPData:
         """Run deformable registration (optionally initialized with a 4x4 numpy affine) and reslice."""
-        device_id = torch.cuda.current_device()
-        device_str = f"cuda:{device_id}"
-        torch.cuda.set_device(device_id)
+        device_kind = device_utils.detect_device_kind()
+        device_id = device_utils.current_device_id(device_kind)
+        device_str = device_utils.device_str(device_id, device_kind)
+        device_utils.set_device(device_id, device_kind)
 
         if isinstance(options, dict):
             backend_options_dict = options.get('registration_backend_options', {})
@@ -157,7 +161,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             start_deformable = time()
             resliced_seg_mesh = None
 
-            with torch.cuda.device(device_id):
+            with device_utils.device_context(device_id, device_kind):
                 fa_image_fixed_def = Image(itk_fixed, device=device_str)
                 fa_image_moving_def = Image(itk_moving, device=device_str)
                 if itk_mask_fixed is not None:
@@ -213,7 +217,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
 
             del deformable_reg, batch_to_reslice, batch_fixed_def, batch_moving_def, fa_image_to_reslice, moved_resliced
             gc.collect()
-            torch.cuda.empty_cache()
+            device_utils.empty_cache(device_kind)
 
             if resliced_tensor.ndim == 4:
                 resliced_labels = resliced_tensor[0]
@@ -249,7 +253,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             )
 
         except Exception as e:
-            logger.error(f"Deformable registration failed on cuda:{device_id}: {e}", exc_info=True)
+            logger.error(f"Deformable registration failed on {device_str}: {e}", exc_info=True)
             self._cleanup_gpu()
             raise
 
@@ -300,12 +304,13 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         """
         
         # Get the current device that was already set by caller
-        device_id = torch.cuda.current_device()
-        device_str = f"cuda:{device_id}"
+        device_kind = device_utils.detect_device_kind()
+        device_id = device_utils.current_device_id(device_kind)
+        device_str = device_utils.device_str(device_id, device_kind)
         logger.info(f"Running registration on device: {device_str}")
-        
+
         # Ensure all operations happen on this device
-        torch.cuda.set_device(device_id)
+        device_utils.set_device(device_id, device_kind)
 
         # Handle both PropagationOptions and dict (from multiprocessing serialization)
         if isinstance(options, dict):
@@ -374,7 +379,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             start_affine = time()
 
             # Create images on specific device
-            with torch.cuda.device(device_id):
+            with device_utils.device_context(device_id, device_kind):
                 fa_image_fixed = Image(itk_fixed, device=device_str)
                 fa_image_moving = Image(itk_moving, device=device_str)
 
@@ -413,10 +418,10 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Clean up affine stage objects
             logger.debug("Deleting affine stage objects...")
             del affine_reg
-            
+
             # Minimal cleanup - don't sync across devices
             gc.collect()
-            torch.cuda.empty_cache()
+            device_utils.empty_cache(device_kind)
 
             # ==================================================================
             # Stage 2: Deformable registration with affine initialization
@@ -436,7 +441,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                          f"smooth_warp_sigma: {smooth_warp_sigma_vox} vox "
                          f"using min_fixed_spacing: {min_fixed_spacing} mm")
             
-            with torch.cuda.device(device_id):
+            with device_utils.device_context(device_id, device_kind):
                 # Recreate batch images for deformable stage to ensure device consistency
                 fa_image_fixed_def = Image(itk_fixed, device=device_str)
                 fa_image_moving_def = Image(itk_moving, device=device_str)
@@ -452,7 +457,6 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 batch_fixed_def = BatchedImages(fa_image_fixed_def)
                 batch_moving_def = BatchedImages(fa_image_moving_def)
 
-                # Use generic label interpolation for segmentation reslicing
                 fa_image_to_reslice = Image(itk_to_reslice, is_segmentation=True, is_onehot=False, background_seg_label=0, device=device_str)
                 batch_to_reslice = BatchedImages([fa_image_to_reslice])
 
@@ -524,9 +528,9 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             # Also delete affine stage objects if still around
             del batch_fixed
             del batch_moving
-            
+
             gc.collect()
-            torch.cuda.empty_cache()
+            device_utils.empty_cache(device_kind)
             
             # Convert resliced image back to ITK format
             logger.debug("Full shape of resliced tensor: " + str(resliced_tensor.shape))
@@ -586,9 +590,9 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             )
         
         except Exception as e:
-            logger.error(f"Registration failed on cuda:{device_id}: {e}", exc_info=True)
+            logger.error(f"Registration failed on {device_str}: {e}", exc_info=True)
             self._cleanup_gpu()
             raise
 
     def get_device_type(self) -> str:
-        return "cuda"
+        return device_utils.detect_device_kind()
