@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 # Backends that are CPU-only and must always use CPURegistrationManager,
 # regardless of whether a GPU is present.  Add new CPU-only backends here
-# (e.g. 'elastix', 'ants') as they are integrated.
-_CPU_ONLY_BACKENDS: frozenset[str] = frozenset({'greedy'})
+# (e.g. 'elastix') as they are integrated.
+_CPU_ONLY_BACKENDS: frozenset[str] = frozenset({'greedy', 'ants'})
 
 
 class RegistrationManagerFactory:
@@ -25,7 +25,7 @@ class RegistrationManagerFactory:
 
     Manager selection follows this priority order:
     1. If ``force_cpu`` is ``True`` → :class:`CPURegistrationManager` (explicit override).
-    2. If the backend is CPU-only (currently ``'greedy'``) → :class:`CPURegistrationManager`.
+    2. If the backend is CPU-only (currently ``'greedy'`` or ``'ants'``) → :class:`CPURegistrationManager`.
     3. If CUDA is available → :class:`GPURegistrationManager`.
     4. Otherwise → :class:`CPURegistrationManager` (fallback).
 
