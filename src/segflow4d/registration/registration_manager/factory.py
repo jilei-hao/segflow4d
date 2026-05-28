@@ -10,6 +10,7 @@ from concurrent.futures import Future
 from segflow4d.registration.registration_manager.abstract_registration_manager import AbstractRegistrationManager
 from segflow4d.registration.registration_manager.cpu_registration_manager import CPURegistrationManager
 from segflow4d.registration.registration_manager.gpu_registration_manager import GPURegistrationManager
+from segflow4d.utility import device_utils
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +62,14 @@ class RegistrationManagerFactory:
         use_cpu = (
             force_cpu
             or registration_backend.lower() in _CPU_ONLY_BACKENDS
-            or not torch.cuda.is_available()
+            or not device_utils.is_accelerator_available()
         )
 
         if use_cpu:
             reason = (
                 "force_cpu flag" if force_cpu
                 else f"'{registration_backend}' is a CPU-only backend" if registration_backend.lower() in _CPU_ONLY_BACKENDS
-                else "no CUDA device available"
+                else "no CUDA or MPS device available"
             )
             logger.info(f"Creating CPU registration manager ({reason})")
             return CPURegistrationManager(

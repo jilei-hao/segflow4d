@@ -6,6 +6,13 @@ dilation_radius: 2
 registration_backend: fireants
 minimum_required_vram_gb: 10
 propagation_strategy_combo: sequential_star # options: sequential_star, sasd_star
+# If > 0, crop the high-res images/masks/seg to the union bbox of the
+# propagated low-res masks (padded by this many voxels) before running the
+# high-res registration, then uncrop the resliced segmentation back to the
+# reference frame. Speeds up registration on large volumes with localised
+# segmentations. Disabled (0) by default; only effective when
+# propagation_strategy_combo is sequential_star or sasd_star.
+roi_crop_padding_voxels: 0
 registration_backend_options:
   smooth_grad_sigma_mm: 3.0
   smooth_warp_sigma_mm: 1.5

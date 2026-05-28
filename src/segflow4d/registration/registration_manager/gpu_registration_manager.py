@@ -27,6 +27,7 @@ from segflow4d.registration.registration_manager.gpu_worker import (
     run_registration_job,
     persistent_gpu_worker,
 )
+from segflow4d.utility import device_utils
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ class ThreadJobDispatcher:
         should_exit = False
         
         try:
-            torch.cuda.set_device(device_id)
+            device_utils.set_device(device_id)
             logger.info(f"[Thread {thread_id}] Starting job '{method_name}' on GPU {device_id}")
             
             run_fn = getattr(self._registration_handler, method_name, None)
@@ -238,10 +239,13 @@ class ThreadJobDispatcher:
         logger.info("ThreadJobDispatcher shutting down...")
         self._running = False
         self._dispatcher_thread.join(timeout=5.0)
-        
-        if wait:
-            self._job_queue.join()
-        
+
+        # We deliberately do NOT call _job_queue.join() here. The dispatch
+        # loop can re-queue jobs without a matching task_done(), so the
+        # unfinished-tasks counter can drift above zero even after every
+        # dispatched job completes. Waiting on the executor below is the
+        # real correctness guarantee — any still-queued (never-dispatched)
+        # jobs are dropped intentionally on shutdown.
         self._executor.shutdown(wait=wait)
         logger.info("ThreadJobDispatcher shutdown complete")
 
@@ -739,18 +743,33 @@ class GPURegistrationManager(AbstractRegistrationManager):
             use_processes: Use process-based execution (recommended).
             use_persistent_workers: Use persistent worker processes (reduces overhead).
         """
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is not available. Use CPURegistrationManager instead.")
-        
+        if not device_utils.is_accelerator_available():
+            raise RuntimeError(
+                "No GPU accelerator (CUDA or MPS) is available. "
+                "Use CPURegistrationManager instead."
+            )
+
+        device_kind = device_utils.detect_device_kind()
         self._registration_backend = registration_backend
-        self._device_type = 'cuda'
+        self._device_type = device_kind
         self._required_vram_mb = required_vram_mb
         self._vram_check_interval = vram_check_interval
-        
+
         if max_workers is None:
-            max_workers = GPUDeviceManager.get_gpu_count()
+            max_workers = GPUDeviceManager.get_gpu_count() or 1
         self._max_workers = max_workers
-        
+
+        # MPS cannot survive fork (no shared device context across processes)
+        # and has no inter-process CUDA-context issue to avoid, so always use
+        # the in-process ThreadJobDispatcher on MPS.
+        if device_kind == "mps" and (use_persistent_workers or use_processes):
+            logger.info(
+                "MPS backend detected — overriding subprocess dispatcher with "
+                "ThreadJobDispatcher (fork+MPS is unsupported)."
+            )
+            use_persistent_workers = False
+            use_processes = False
+
         # Select dispatcher type
         if use_persistent_workers:
             self._dispatcher = PersistentProcessJobDispatcher(
