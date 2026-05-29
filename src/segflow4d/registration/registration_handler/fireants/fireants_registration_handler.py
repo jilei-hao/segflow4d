@@ -111,8 +111,14 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             self._cleanup_gpu()
             raise
 
-    def run_deformable_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, init_affine_matrix=None, mask_fixed=None, mask_moving=None) -> TPData:
-        """Run deformable registration (optionally initialized with a 4x4 numpy affine) and reslice."""
+    def run_deformable_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, init_affine_matrix=None, mask_fixed=None, mask_moving=None, additional_meshes_to_reslice=None) -> TPData:
+        """Run deformable registration (optionally initialized with a 4x4 numpy affine) and reslice.
+
+        ``additional_meshes_to_reslice`` is an optional ``{name: MeshWrapper}`` dict
+        of extra surface meshes (e.g. StudyGen-generated reference meshes) warped
+        along the same deformation field as ``mesh_to_reslice``; the warped copies
+        are returned in ``TPData.resliced_meshes``.
+        """
         device_kind = device_utils.detect_device_kind()
         device_id = device_utils.current_device_id(device_kind)
         device_str = device_utils.device_str(device_id, device_kind)
@@ -160,6 +166,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
 
             start_deformable = time()
             resliced_seg_mesh = None
+            resliced_additional_meshes = dict[str, MeshWrapper]()
+            need_warp_field = mesh_to_reslice is not None or bool(additional_meshes_to_reslice)
 
             with device_utils.device_context(device_id, device_kind):
                 fa_image_fixed_def = Image(itk_fixed, device=device_str)
@@ -202,7 +210,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
 
                 mesh_warp_field = None
                 mesh_warp_image = None
-                if mesh_to_reslice is not None:
+                if need_warp_field:
                     logger.info("Computing inverse warp field for mesh reslicing...")
                     mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
                     mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
@@ -214,6 +222,14 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                     warped_vertices = warp_mesh_vertices(mesh_vertices_tensor, mesh_warp_field, img_fixed, img_moving)
                     warped_vertices_np = warped_vertices.cpu().detach().numpy()
                     resliced_seg_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
+
+                if additional_meshes_to_reslice:
+                    logger.info(f"Reslicing {len(additional_meshes_to_reslice)} additional mesh(es)...")
+                    for mesh_name, mesh in additional_meshes_to_reslice.items():
+                        add_vertices = mesh.get_vertices()
+                        add_vertices_tensor = torch.from_numpy(add_vertices).to(device_str, dtype=torch.float32)
+                        add_warped = warp_mesh_vertices(add_vertices_tensor, mesh_warp_field, img_fixed, img_moving)
+                        resliced_additional_meshes[mesh_name] = mesh.update_vertices(add_warped.cpu().detach().numpy())
 
             del deformable_reg, batch_to_reslice, batch_fixed_def, batch_moving_def, fa_image_to_reslice, moved_resliced
             gc.collect()
@@ -249,6 +265,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             return TPData(
                 resliced_image=ImageWrapper(resliced_itk),
                 resliced_segmentation_mesh=resliced_seg_mesh,
+                resliced_meshes=resliced_additional_meshes,
                 warp_image=mesh_warp_image
             )
 
@@ -296,11 +313,15 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
         return ImageWrapper(warp_image)
 
 
-    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, mask_fixed=None, mask_moving=None) -> TPData:
+    def run_registration_and_reslice(self, img_fixed, img_moving, img_to_reslice, mesh_to_reslice, options: PropagationOptions, mask_fixed=None, mask_moving=None, additional_meshes_to_reslice=None) -> TPData:
         """
         Perform affine + deformable registration and reslice images/segmentations.
-        
+
         Note: options may come as either PropagationOptions or dict due to multiprocessing serialization.
+
+        ``additional_meshes_to_reslice`` is an optional ``{name: MeshWrapper}`` dict
+        of extra surface meshes warped along the same deformation field as
+        ``mesh_to_reslice``; warped copies are returned in ``TPData.resliced_meshes``.
         """
         
         # Get the current device that was already set by caller
@@ -429,6 +450,8 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Starting deformable registration...")
             start_deformable = time()
             resliced_seg_mesh = None
+            resliced_additional_meshes = dict[str, MeshWrapper]()
+            need_warp_field = mesh_to_reslice is not None or bool(additional_meshes_to_reslice)
 
             # convert vox sigma to mm by using the min_fixed_spacing
             # find the smallest spacing among fixed image
@@ -497,7 +520,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 # image dimensions are too small for the FFT-based downsampling path.
                 mesh_warp_field = None
                 mesh_warp_image = None
-                if mesh_to_reslice is not None:
+                if need_warp_field:
                     logger.info("Computing inverse warp field for mesh reslicing...")
                     mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
                     mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
@@ -515,7 +538,16 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                     )
                     warped_vertices_np = warped_vertices.cpu().detach().numpy()
                     resliced_seg_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
-            
+
+                # Reslice additional meshes along the same warp field
+                if additional_meshes_to_reslice:
+                    logger.info(f"Reslicing {len(additional_meshes_to_reslice)} additional mesh(es)...")
+                    for mesh_name, mesh in additional_meshes_to_reslice.items():
+                        add_vertices = mesh.get_vertices()
+                        add_vertices_tensor = torch.from_numpy(add_vertices).to(device_str, dtype=torch.float32)
+                        add_warped = warp_mesh_vertices(add_vertices_tensor, mesh_warp_field, img_fixed, img_moving)
+                        resliced_additional_meshes[mesh_name] = mesh.update_vertices(add_warped.cpu().detach().numpy())
+
             # Clean up deformable stage
             logger.debug("Deleting deformable stage objects...")
             del deformable_reg
@@ -571,21 +603,13 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
             resliced_itk.SetOrigin(reslice_meta['origin'])
             resliced_itk.SetDirection(reslice_meta['direction'])
             
-            # Mesh reslicing to be implemented
-            resliced_meshes = dict[str, MeshWrapper]()
-            if mesh_to_reslice is not None:
-                logger.warning("Mesh reslicing not yet implemented")
-
-            # if resliced_seg_mesh is None:
-            #     raise RuntimeError("Resliced segmentation mesh is None after reslicing")
-            
             logger.info("Registration and reslicing completed successfully")
-            
+
             return TPData(
                 affine_matrix=affine_matrix.numpy().copy(),
                 resliced_image=ImageWrapper(resliced_itk),
                 resliced_segmentation_mesh=resliced_seg_mesh,
-                resliced_meshes=resliced_meshes,
+                resliced_meshes=resliced_additional_meshes,
                 warp_image=mesh_warp_image
             )
         

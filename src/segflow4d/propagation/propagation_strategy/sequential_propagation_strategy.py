@@ -40,6 +40,7 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
                 img_moving=tp_input_data[src_tp].image,
                 img_to_reslice=tp_input_data[src_tp].resliced_image,
                 mesh_to_reslice=tp_input_data[src_tp].segmentation_mesh,
+                additional_meshes_to_reslice=tp_input_data[src_tp].additional_meshes,
                 options=options,
                 mask_fixed=tp_input_data[tgt_tp].mask,
                 mask_moving=tp_input_data[src_tp].mask
@@ -56,8 +57,11 @@ class SequentialPropagationStrategy(AbstractPropagationStrategy):
             
             tp_input_data[tgt_tp].resliced_image = result.resliced_image
             tp_input_data[tgt_tp].segmentation_mesh = result.resliced_segmentation_mesh
+            # Chain warped additional meshes forward so the next step warps them again.
+            tp_input_data[tgt_tp].additional_meshes = result.resliced_meshes
+            tp_input_data[tgt_tp].resliced_meshes = result.resliced_meshes
             tp_input_data[tgt_tp].warp_image = result.warp_image
-        
+
         logger.info("Sequential propagation completed")
         return tp_input_data
 

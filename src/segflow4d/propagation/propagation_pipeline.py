@@ -209,6 +209,10 @@ class PropagationPipeline:
                     )
             tp_input_data_hr[tp_ref].resliced_image = seg_ref_hr
             tp_input_data_hr[tp_ref].segmentation_mesh = ref_input.seg_mesh_ref.deepcopy() if ref_input.seg_mesh_ref else None
+            tp_input_data_hr[tp_ref].additional_meshes = (
+                {k: v.deepcopy() for k, v in ref_input.additional_meshes_ref.items()}
+                if ref_input.additional_meshes_ref else None
+            )
 
             # run high-res propagation for segmentations
             propagated_data_hr = strategy_hr.propagate(tp_input_data_hr, options)
@@ -250,6 +254,9 @@ class PropagationPipeline:
                 resliced_mesh = propagated_data_hr[tp].segmentation_mesh
                 if resliced_mesh is not None:
                     result[tp].segmentation_mesh = resliced_mesh
+                resliced_additional = propagated_data_hr[tp].resliced_meshes
+                if resliced_additional:
+                    result[tp].additional_meshes = resliced_additional
 
             logger.info(f"[Thread {thread_id}] Propagation completed successfully for timepoints {tp_list}")
                         
@@ -355,6 +362,9 @@ class PropagationPipeline:
                 if tp_data.segmentation_mesh is not None:
                     result[tp].segmentation_mesh = tp_data.segmentation_mesh
 
+                if tp_data.additional_meshes:
+                    result[tp].additional_meshes = tp_data.additional_meshes
+
         return result
     
 
@@ -405,6 +415,23 @@ class PropagationPipeline:
                 )
             else:
                 logger.warning(f"Segmentation mesh for time point {tp} is None, skipping mesh write.")
+
+        # Write warped additional meshes per timepoint (named <mesh_name>_tp-NNN.vtp).
+        # The ref timepoint carries the original (unwarped) input meshes; targets
+        # carry the copies warped along their deformation field.
+        additional_mesh_output_dir = os.path.join(self._options.output_directory, "additional-mesh")
+        for tp in sorted(all_tp_output.keys()):
+            tp_data = all_tp_output[tp]
+            if not tp_data.additional_meshes:
+                continue
+            os.makedirs(additional_mesh_output_dir, exist_ok=True)
+            for mesh_name, mesh in tp_data.additional_meshes.items():
+                if mesh is None:
+                    continue
+                async_writer.submit_mesh(
+                    mesh,
+                    os.path.join(additional_mesh_output_dir, f"{mesh_name}_tp-{tp:03d}.vtp")
+                )
 
 
 

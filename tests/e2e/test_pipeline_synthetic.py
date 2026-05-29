@@ -106,7 +106,26 @@ def _flush_async_writer():
     aw_mod.async_writer.flush()
 
 
-def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
+def _make_ref_mesh(tmp_path):
+    """Write a synthetic surface mesh (.vtp) roughly co-located with the ref
+    seg sphere, for verifying additional_meshes warping. Returns (path, n_pts)."""
+    import vtk
+    from segflow4d.utility.mesh_helper.mesh_helper import write_polydata
+
+    src = vtk.vtkSphereSource()
+    cz, cy, cx = SHAPE_ZYX[0] // 2, SHAPE_ZYX[1] // 2, SHAPE_ZYX[2] // 2
+    src.SetCenter(float(cx), float(cy), float(cz))
+    src.SetRadius(5.0)
+    src.SetThetaResolution(16)
+    src.SetPhiResolution(16)
+    src.Update()
+    polydata = src.GetOutput()
+    mesh_path = str(tmp_path / "ref_mesh.vtp")
+    write_polydata(polydata, mesh_path)
+    return mesh_path, polydata.GetNumberOfPoints()
+
+
+def _build_input(img_path, seg_path, out_dir, write_to_disk=True, additional_meshes=None):
     """Build a PropagationInput using the FireANTs (GPU) backend."""
     os.makedirs(out_dir, exist_ok=True)
     return (
@@ -116,7 +135,7 @@ def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
             tp_ref=1,
             tp_target=[2, 3],
             seg_ref_path=seg_path,
-            additional_meshes_ref=None,
+            additional_meshes_ref=additional_meshes,
         )
         .set_options(
             lowres_factor=2.0,
@@ -135,7 +154,8 @@ def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
 
 
 def _build_input_greedy(img_path, seg_path, out_dir, write_to_disk=True,
-                        affine_iterations=None, deformable_iterations=None, **backend_kwargs):
+                        affine_iterations=None, deformable_iterations=None,
+                        additional_meshes=None, **backend_kwargs):
     """Build a PropagationInput using the Greedy (CPU) backend."""
     if affine_iterations is None:
         affine_iterations = [2]
@@ -149,7 +169,7 @@ def _build_input_greedy(img_path, seg_path, out_dir, write_to_disk=True,
             tp_ref=1,
             tp_target=[2, 3],
             seg_ref_path=seg_path,
-            additional_meshes_ref=None,
+            additional_meshes_ref=additional_meshes,
         )
         .set_options(
             lowres_factor=2.0,
@@ -215,6 +235,35 @@ class TestPipelineSyntheticOutputFiles:
         assert size[0] == SHAPE_ZYX[2], f"X dim mismatch: {size[0]} vs {SHAPE_ZYX[2]}"
         assert size[1] == SHAPE_ZYX[1], f"Y dim mismatch: {size[1]} vs {SHAPE_ZYX[1]}"
         assert size[2] == SHAPE_ZYX[0], f"Z dim mismatch: {size[2]} vs {SHAPE_ZYX[0]}"
+
+
+@pytest.mark.gpu
+class TestPipelineSyntheticAdditionalMeshes:
+    def test_pipeline_warps_additional_meshes(self, tmp_path):
+        """additional_meshes provided on the ref TP must be warped to every TP
+        and written as additional-mesh/<name>_tp-NNN.vtp with vertex count preserved."""
+        import vtk
+        from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
+
+        img_path, seg_path = _write_images(tmp_path)
+        mesh_path, n_pts = _make_ref_mesh(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input(
+            img_path, seg_path, out_dir, write_to_disk=True,
+            additional_meshes={"model-ml_pi-01": mesh_path},
+        )
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        for tp in (1, 2, 3):
+            out_mesh = os.path.join(out_dir, "additional-mesh", f"model-ml_pi-01_tp-{tp:03d}.vtp")
+            assert os.path.isfile(out_mesh), f"warped additional mesh missing for tp {tp}: {out_mesh}"
+            pd = read_polydata(out_mesh)
+            assert pd.GetNumberOfPoints() == n_pts, (
+                f"tp {tp}: vertex count {pd.GetNumberOfPoints()} != input {n_pts} "
+                "(warping must preserve topology)"
+            )
 
 
 @pytest.mark.gpu
@@ -321,6 +370,40 @@ class TestPipelineSyntheticGreedyOutputFiles:
         assert size[0] == SHAPE_ZYX[2], f"X dim mismatch: {size[0]} vs {SHAPE_ZYX[2]}"
         assert size[1] == SHAPE_ZYX[1], f"Y dim mismatch: {size[1]} vs {SHAPE_ZYX[1]}"
         assert size[2] == SHAPE_ZYX[0], f"Z dim mismatch: {size[2]} vs {SHAPE_ZYX[0]}"
+
+
+@pytest.mark.greedy
+class TestPipelineSyntheticGreedyAdditionalMeshes:
+    """Verify additional_meshes warping on the Greedy CPU backend."""
+
+    @pytest.fixture(autouse=True)
+    def skip_if_no_greedy(self):
+        pytest.importorskip(
+            "picsl_greedy",
+            reason="picsl-greedy not installed — skipping Greedy e2e tests",
+        )
+
+    def test_pipeline_warps_additional_meshes(self, tmp_path):
+        from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
+
+        img_path, seg_path = _write_images(tmp_path)
+        mesh_path, n_pts = _make_ref_mesh(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input_greedy(
+            img_path, seg_path, out_dir, write_to_disk=True,
+            additional_meshes={"model-ml_pi-01": mesh_path},
+        )
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        for tp in (1, 2, 3):
+            out_mesh = os.path.join(out_dir, "additional-mesh", f"model-ml_pi-01_tp-{tp:03d}.vtp")
+            assert os.path.isfile(out_mesh), f"warped additional mesh missing for tp {tp}: {out_mesh}"
+            pd = read_polydata(out_mesh)
+            assert pd.GetNumberOfPoints() == n_pts, (
+                f"tp {tp}: vertex count {pd.GetNumberOfPoints()} != input {n_pts}"
+            )
 
 
 @pytest.mark.greedy
