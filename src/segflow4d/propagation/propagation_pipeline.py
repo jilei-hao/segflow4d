@@ -433,6 +433,12 @@ class PropagationPipeline:
                     os.path.join(additional_mesh_output_dir, f"{mesh_name}_tp-{tp:03d}.vtp")
                 )
 
+        # Block until every queued write has hit disk so callers can read the
+        # results as soon as write_results_to_disk() returns. Without this the
+        # async writes can still be in flight (and, on a CLI process exit, lost
+        # to the daemon thread being killed).
+        async_writer.flush()
+
 
 
 
