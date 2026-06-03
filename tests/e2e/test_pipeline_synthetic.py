@@ -186,6 +186,52 @@ def _build_input_greedy(img_path, seg_path, out_dir, write_to_disk=True,
     )
 
 
+def _make_ref_mesh_obj():
+    """Build the same synthetic ref-seg-sphere surface as ``_make_ref_mesh`` but
+    return it as an in-memory vtkPolyData (no disk write). Returns (polydata, n_pts)."""
+    import vtk
+
+    src = vtk.vtkSphereSource()
+    cz, cy, cx = SHAPE_ZYX[0] // 2, SHAPE_ZYX[1] // 2, SHAPE_ZYX[2] // 2
+    src.SetCenter(float(cx), float(cy), float(cz))
+    src.SetRadius(5.0)
+    src.SetThetaResolution(16)
+    src.SetPhiResolution(16)
+    src.Update()
+    polydata = src.GetOutput()
+    return polydata, polydata.GetNumberOfPoints()
+
+
+def _build_input_greedy_in_memory(out_dir, additional_meshes=None):
+    """Build a PropagationInput via the in-memory factory API (Greedy backend).
+
+    Mirrors ``_build_input_greedy`` but feeds the 4-D image, ref segmentation,
+    and additional meshes as objects — exactly the path the avrp-handler uses.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    return (
+        PropagationInputFactory()
+        .set_image_4d(_make_4d_image())
+        .add_tp_input_group(
+            tp_ref=1,
+            tp_target=[2, 3],
+            seg_ref=_make_seg_ref(),
+            additional_meshes_ref=additional_meshes,
+        )
+        .set_options(
+            lowres_factor=2.0,
+            registration_backend="GREEDY",
+            dilation_radius=2,
+            write_result_to_disk=True,
+            output_directory=out_dir,
+            minimum_required_vram_gb=0,
+            affine_iterations=[2],
+            deformable_iterations=[2],
+        )
+        .build()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -470,4 +516,50 @@ class TestPipelineSyntheticGreedySegQuality:
             dice = result.macro_avg.dice
             assert dice >= 0.50, (
                 f"TP {tp}: propagated Dice {dice:.3f} < 0.50 threshold"
+            )
+
+
+@pytest.mark.greedy
+class TestPipelineSyntheticInMemoryAPI:
+    """Drive the full pipeline through the in-memory factory API (objects, not
+    file paths) — the path the avrp-handler S4 flow uses. Greedy/CPU so it runs
+    without an accelerator."""
+
+    @pytest.fixture(autouse=True)
+    def skip_if_no_greedy(self):
+        pytest.importorskip(
+            "picsl_greedy",
+            reason="picsl-greedy not installed — skipping Greedy e2e tests",
+        )
+
+    def test_in_memory_pipeline_creates_4d_outputs(self, tmp_path):
+        out_dir = str(tmp_path / "output")
+        prop_input = _build_input_greedy_in_memory(out_dir)
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        assert os.path.isfile(os.path.join(out_dir, "seg-4d.nii.gz"))
+        assert os.path.isfile(os.path.join(out_dir, "image-4d.nii.gz"))
+
+    def test_in_memory_pipeline_warps_in_memory_meshes(self, tmp_path):
+        """An in-memory vtkPolyData passed as additional_meshes_ref must be warped
+        to every TP and written as additional-mesh/<name>_tp-NNN.vtp with vertex
+        count preserved."""
+        from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
+
+        mesh_obj, n_pts = _make_ref_mesh_obj()
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input_greedy_in_memory(
+            out_dir, additional_meshes={"model-ml_pi-01": mesh_obj},
+        )
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        for tp in (1, 2, 3):
+            out_mesh = os.path.join(out_dir, "additional-mesh", f"model-ml_pi-01_tp-{tp:03d}.vtp")
+            assert os.path.isfile(out_mesh), f"warped additional mesh missing for tp {tp}: {out_mesh}"
+            pd = read_polydata(out_mesh)
+            assert pd.GetNumberOfPoints() == n_pts, (
+                f"tp {tp}: vertex count {pd.GetNumberOfPoints()} != input {n_pts}"
             )
