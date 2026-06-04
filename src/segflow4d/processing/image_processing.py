@@ -1,9 +1,75 @@
+import math
 import numpy as np
 import SimpleITK as sitk
 from segflow4d.utility.image_helper.image_helper_factory import create_image_helper
 from segflow4d.common.types.interpolation_type import InterpolationType
 from segflow4d.common.types.tp_image_group import TPImageGroup
 from segflow4d.common.types.image_wrapper import ImageWrapper
+
+# FireANTs clamps each registration scale level to at least this many voxels per
+# spatial dimension (its internal MIN_IMG_SIZE). When an image is smaller it is
+# silently upsampled — and the fixed and moving images can be upsampled
+# inconsistently, producing a grid/shape mismatch in the loss
+# (e.g. "size of tensor a (32) must match the size of tensor b (28)").
+# Keep every spatial dim at/above this floor before handing images to FireANTs.
+FIREANTS_MIN_IMG_SIZE = 32
+
+
+def clamp_scale_factor_for_min_size(
+    image_size: tuple[int, ...] | list[int],
+    scale_factor: float,
+    min_size_voxels: int = FIREANTS_MIN_IMG_SIZE,
+) -> float:
+    """
+    Raise ``scale_factor`` just enough that resampling an image of ``image_size``
+    never produces a spatial dimension below ``min_size_voxels``.
+
+    Resampling uses ``new_size[d] = max(1, int(image_size[d] * factor))`` (see
+    ``CPUImageHelper.resample``), so a downsampling factor can shrink a small
+    dimension below FireANTs' floor. This returns the smallest factor that is
+    ``>=`` the requested one and keeps every resampled spatial dim ``>=``
+    ``min_size_voxels``.
+
+    A dimension whose *native* size is already below ``min_size_voxels`` cannot
+    be rescued by (down)sampling; for it we cap the contribution at ``1.0`` (no
+    upsampling of real data past native resolution) and leave it at its native
+    size — mirroring ``compute_union_bbox``, which returns the full extent when
+    the image is smaller than the floor.
+
+    Args:
+        image_size: Spatial size of the image (any dim count). For a 4-D image
+            pass only the spatial dims (e.g. ``size[:3]``).
+        scale_factor: Requested resampling factor (fraction of native
+            resolution; ``> 0``).
+        min_size_voxels: Per-dimension voxel floor. ``<= 0`` disables clamping.
+
+    Returns:
+        The effective scale factor (``>=`` the requested one).
+    """
+    if scale_factor <= 0:
+        raise ValueError(f"scale_factor must be > 0, got {scale_factor}.")
+    if min_size_voxels <= 0:
+        return scale_factor
+
+    effective = scale_factor
+    for sz in image_size:
+        if sz <= 0:
+            continue
+        if max(1, int(sz * effective)) >= min_size_voxels:
+            continue
+        if sz < min_size_voxels:
+            # Native dim already under the floor; don't upsample real data.
+            needed = 1.0
+        else:
+            needed = min_size_voxels / sz
+            # int() floors, so a float round-down could leave us one voxel
+            # short; nudge up until the resampled size truly clears the floor.
+            while int(sz * needed) < min_size_voxels:
+                needed = math.nextafter(needed, math.inf)
+        effective = max(effective, needed)
+
+    return effective
+
 
 def create_reference_mask(seg_ref_image: ImageWrapper, scale_factor: float, dilation_radius: int) -> ImageWrapper:
     """

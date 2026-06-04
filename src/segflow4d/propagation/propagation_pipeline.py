@@ -18,6 +18,7 @@ from segflow4d.processing.image_processing import (
     compute_union_bbox,
     crop_to_bbox,
     uncrop_to_reference,
+    FIREANTS_MIN_IMG_SIZE,
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from segflow4d.utility.file_writer import async_writer
@@ -165,7 +166,6 @@ class PropagationPipeline:
                     # bbox is smaller, the moving image gets silently upsampled
                     # while the fixed stays cropped, producing a shape mismatch
                     # in the loss. Expand the bbox to keep both at >= 32 vox.
-                    FIREANTS_MIN_IMG_SIZE = 32
                     roi_crop_start, roi_crop_size = compute_union_bbox(
                         masks_for_bbox,
                         padding_voxels=options.roi_crop_padding_voxels,
