@@ -20,6 +20,8 @@ import SimpleITK as sitk
 
 from segflow4d.common.types.propagation_input import PropagationInputFactory
 from segflow4d.propagation.propagation_pipeline import PropagationPipeline
+from segflow4d.propagation.tp_partition import TPPartition
+from segflow4d.processing.image_processing import FIREANTS_MIN_IMG_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +237,88 @@ def _build_input_greedy_in_memory(out_dir, additional_meshes=None):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+class TestLowresMinImgSizeGuard:
+    """Regression for the FireANTs MIN_IMG_SIZE crash on small spatial dims.
+
+    A volume whose smallest dim drops below FireANTs' MIN_IMG_SIZE (~32 vox)
+    after the low-res downsample used to crash the low-res mask registration
+    with a tensor shape mismatch (FireANTs upsampled the fixed/moving images
+    inconsistently). The pipeline must clamp the effective low-res factor so no
+    spatial dim falls below the floor.
+
+    This exercises only TPPartition's data preparation (resample + reference
+    mask), which is backend-agnostic, so it runs on CPU without a GPU or
+    picsl-greedy.
+    """
+
+    # native z=40; at the requested factor 0.5 -> 20 < 32 without the guard,
+    # but 40 >= 32 so clamping can rescue it (-> factor >= 0.8 -> z >= 32).
+    SMALL_SHAPE_ZYX = (40, 48, 48)
+
+    def _build_partition(self, lowres_factor, tmp_path):
+        out_dir = str(tmp_path / "output")
+        os.makedirs(out_dir, exist_ok=True)
+        prop_input = (
+            PropagationInputFactory()
+            .set_image_4d(_make_4d_image(shape_zyx=self.SMALL_SHAPE_ZYX))
+            .add_tp_input_group(
+                tp_ref=1,
+                tp_target=[2, 3],
+                seg_ref=_make_seg_ref(shape_zyx=self.SMALL_SHAPE_ZYX),
+                additional_meshes_ref=None,
+            )
+            .set_options(
+                lowres_factor=lowres_factor,
+                registration_backend="GREEDY",
+                dilation_radius=2,
+                write_result_to_disk=False,
+                output_directory=out_dir,
+                minimum_required_vram_gb=0,
+            )
+            .build()
+        )
+        group = prop_input.tp_input_groups[0]
+        return TPPartition(
+            input=group,
+            image_4d=prop_input.image_4d,
+            options=prop_input.options,
+        )
+
+    def test_lowres_images_stay_at_or_above_min_img_size(self, tmp_path):
+        partition = self._build_partition(lowres_factor=0.5, tmp_path=tmp_path)
+        for tp, tp_data in partition._tp_data.items():
+            assert tp_data.image_low_res is not None
+            size = tp_data.image_low_res.get_data().GetSize()
+            assert min(size) >= FIREANTS_MIN_IMG_SIZE, (
+                f"tp {tp}: low-res image size {size} drops below "
+                f"MIN_IMG_SIZE={FIREANTS_MIN_IMG_SIZE}"
+            )
+
+    def test_reference_mask_stays_co_gridded_with_lowres_image(self, tmp_path):
+        partition = self._build_partition(lowres_factor=0.5, tmp_path=tmp_path)
+        ref_tp = partition._input.tp_ref
+        ref_data = partition._tp_data[ref_tp]
+        assert ref_data.mask_low_res is not None
+        mask_size = ref_data.mask_low_res.get_data().GetSize()
+        image_size = ref_data.image_low_res.get_data().GetSize()
+        assert min(mask_size) >= FIREANTS_MIN_IMG_SIZE
+        # The low-res mask is the moving label for the mask stage; it must share
+        # the low-res image grid so the warp field reslices it correctly.
+        assert mask_size == image_size, (
+            f"low-res mask {mask_size} not co-gridded with image {image_size}"
+        )
+
+    def test_upsampling_factor_left_unchanged(self, tmp_path):
+        """When the requested factor already keeps dims above the floor, the
+        low-res grid follows the requested factor (no spurious clamping)."""
+        partition = self._build_partition(lowres_factor=2.0, tmp_path=tmp_path)
+        ref_data = partition._tp_data[partition._input.tp_ref]
+        size = ref_data.image_low_res.get_data().GetSize()
+        # 48 * 2 = 96, 40 * 2 = 80 -> all well above the floor and exactly 2x.
+        expected = tuple(s * 2 for s in self.SMALL_SHAPE_ZYX[::-1])  # zyx -> xyz
+        assert size == expected, f"expected {expected}, got {size}"
+
 
 @pytest.mark.gpu
 class TestPipelineSyntheticOutputFiles:
