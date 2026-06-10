@@ -204,7 +204,8 @@ without the CUDA box — **the production deployment target remains CUDA**
 The MPS Metal kernels live on a FireANTs **fork branch** and are *not* in
 upstream FireANTs. Do **not** use `segflow4d-install-fireants` here — that
 command builds the fused **CUDA** ops and requires `nvcc` + an NVIDIA GPU.
-Install the MPS branch manually instead.
+Install the MPS branch manually instead, then build the fused ops Metal
+extension from the same checkout (step 4 — **required**, see below).
 
 #### 1. Create a conda environment
 
@@ -224,23 +225,38 @@ PyTorch install step is needed.
 
 #### 3. Install FireANTs from the MPS branch
 
-```bash
-pip install "git+https://github.com/jilei-hao/FireANTs.git@experiment/mps"
-```
-
-Or, for local development against a checkout:
+Clone the branch (you need the checkout anyway for the fused ops build in
+step 4):
 
 ```bash
 git clone -b experiment/mps https://github.com/jilei-hao/FireANTs.git
 pip install -e FireANTs
 ```
 
-The fused CUDA ops (`fireants_fused_ops`) are **not** built on this track — they
-are CUDA-only. The MPS path uses the Metal kernels included in the branch, so the
-`ModuleNotFoundError: No module named 'fireants_fused_ops'` troubleshooting note
-does not apply here.
+#### 4. Install the fused ops Metal extension (required)
 
-#### 4. Run
+`fireants_fused_ops` (FFO) is **required** on macOS — it is no longer
+CUDA-only. The `experiment/mps` branch ships a Metal backend for the fused
+ops (fused Adam update, `grid_sample_3d` forward/backward, Gaussian blur
+FFT). Without FFO, FireANTs falls back to `torch.grid_sample`, whose 3D
+backward is `NotImplementedError` on MPS — registration fails outright.
+
+Build it from the `fused_ops` directory of the checkout (`setup.py`
+auto-selects the Metal extension on darwin):
+
+```bash
+cd FireANTs/fused_ops
+pip install . --no-build-isolation
+```
+
+Verify the Metal backend is active:
+
+```bash
+python -c "import fireants_fused_ops as f; print(f.__backend__)"
+# → metal
+```
+
+#### 5. Run
 
 Set `registration_backend: fireants` in your config (the default). SegFlow4D
 autodetects the accelerator and selects MPS when no CUDA device is present — no
@@ -322,7 +338,14 @@ segflow4d --help
 ## Troubleshooting
 
 **`ModuleNotFoundError: No module named 'fireants_fused_ops'`**
-The fused ops were not installed. Re-run `segflow4d-install-fireants`.
+The fused ops were not installed. On Linux/CUDA, re-run
+`segflow4d-install-fireants`. On macOS, build the Metal extension from your
+FireANTs `experiment/mps` checkout:
+```bash
+cd FireANTs/fused_ops
+pip install . --no-build-isolation
+python -c "import fireants_fused_ops as f; print(f.__backend__)"  # → metal
+```
 
 **`ImportError: libc10.so: cannot open shared object file`**  
 PyTorch libraries are not on `LD_LIBRARY_PATH`. Make sure you are running inside the correct conda environment.
