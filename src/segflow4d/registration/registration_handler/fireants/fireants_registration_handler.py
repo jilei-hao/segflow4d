@@ -217,11 +217,14 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
 
                 if mesh_to_reslice is not None:
                     logger.info("Reslicing target mesh...")
+                    # update_vertices() mutates in place; warp into a fresh copy so
+                    # the shared reference mesh is never altered (it is passed by
+                    # reference to every target's job by the propagation strategy).
                     mesh_vertices = mesh_to_reslice.get_vertices()
                     mesh_vertices_tensor = torch.from_numpy(mesh_vertices).to(device_str, dtype=torch.float32)
                     warped_vertices = warp_mesh_vertices(mesh_vertices_tensor, mesh_warp_field, img_fixed, img_moving)
                     warped_vertices_np = warped_vertices.cpu().detach().numpy()
-                    resliced_seg_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
+                    resliced_seg_mesh = mesh_to_reslice.deepcopy().update_vertices(warped_vertices_np)
 
                 if additional_meshes_to_reslice:
                     logger.info(f"Reslicing {len(additional_meshes_to_reslice)} additional mesh(es)...")
@@ -229,7 +232,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                         add_vertices = mesh.get_vertices()
                         add_vertices_tensor = torch.from_numpy(add_vertices).to(device_str, dtype=torch.float32)
                         add_warped = warp_mesh_vertices(add_vertices_tensor, mesh_warp_field, img_fixed, img_moving)
-                        resliced_additional_meshes[mesh_name] = mesh.update_vertices(add_warped.cpu().detach().numpy())
+                        resliced_additional_meshes[mesh_name] = mesh.deepcopy().update_vertices(add_warped.cpu().detach().numpy())
 
             del deformable_reg, batch_to_reslice, batch_fixed_def, batch_moving_def, fa_image_to_reslice, moved_resliced
             gc.collect()
@@ -528,6 +531,9 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 # Reslice mesh
                 if mesh_to_reslice is not None:
                     logger.info("Reslicing target mesh...")
+                    # update_vertices() mutates in place; warp into a fresh copy so
+                    # the shared reference mesh is never altered (it is passed by
+                    # reference to every target's job by the propagation strategy).
                     mesh_vertices = mesh_to_reslice.get_vertices()  # numpy array (N, 3)
                     mesh_vertices_tensor = torch.from_numpy(mesh_vertices).to(device_str, dtype=torch.float32)
                     warped_vertices = warp_mesh_vertices(
@@ -537,7 +543,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                         img_moving
                     )
                     warped_vertices_np = warped_vertices.cpu().detach().numpy()
-                    resliced_seg_mesh = mesh_to_reslice.update_vertices(warped_vertices_np)
+                    resliced_seg_mesh = mesh_to_reslice.deepcopy().update_vertices(warped_vertices_np)
 
                 # Reslice additional meshes along the same warp field
                 if additional_meshes_to_reslice:
@@ -546,7 +552,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                         add_vertices = mesh.get_vertices()
                         add_vertices_tensor = torch.from_numpy(add_vertices).to(device_str, dtype=torch.float32)
                         add_warped = warp_mesh_vertices(add_vertices_tensor, mesh_warp_field, img_fixed, img_moving)
-                        resliced_additional_meshes[mesh_name] = mesh.update_vertices(add_warped.cpu().detach().numpy())
+                        resliced_additional_meshes[mesh_name] = mesh.deepcopy().update_vertices(add_warped.cpu().detach().numpy())
 
             # Clean up deformable stage
             logger.debug("Deleting deformable stage objects...")
