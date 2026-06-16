@@ -71,6 +71,68 @@ def clamp_scale_factor_for_min_size(
     return effective
 
 
+def pad_image_to_min_size(
+    image: ImageWrapper,
+    min_size_voxels: int = FIREANTS_MIN_IMG_SIZE,
+    constant: float = 0.0,
+) -> ImageWrapper:
+    """
+    Symmetrically pad any spatial dimension below ``min_size_voxels`` up to the
+    floor with a constant value, so the image clears FireANTs' MIN_IMG_SIZE.
+
+    This is the companion to ``clamp_scale_factor_for_min_size``. The clamp keeps
+    *downsampling* from pushing a dimension below the floor, but it cannot rescue
+    a dimension whose *native* size is already below it (you can't recover detail
+    by upsampling). For those natively-thin volumes — a flat slab where, say,
+    z < 32 — FireANTs would still silently and inconsistently upsample the fixed
+    vs moving image and crash with a tensor shape mismatch. Padding adds empty
+    border voxels so every spatial dim is at/above the floor, mirroring the
+    ``min_size_voxels`` guard the roi-crop path applies to the bbox.
+
+    Padding preserves spacing and direction; SimpleITK shifts the origin so the
+    original voxels keep their physical-space location (the deformation field
+    computed on the padded grid therefore still resamples correctly onto the
+    high-res reference, whose extent is a subset of the padded extent).
+
+    A no-op when every spatial dim already meets the floor (the common case), so
+    well-sized studies are unaffected.
+
+    Args:
+        image: Image to pad.
+        min_size_voxels: Per-dimension voxel floor. ``<= 0`` disables padding.
+        constant: Fill value for the added border voxels (default background 0).
+
+    Returns:
+        The padded image (or the input unchanged if no dim was below the floor).
+    """
+    if min_size_voxels <= 0:
+        return image
+
+    data = image.get_data()
+    if data is None:
+        raise ValueError("image has no data")
+
+    size = list(data.GetSize())
+    lower = [0] * len(size)
+    upper = [0] * len(size)
+    needs_pad = False
+    for d, sz in enumerate(size):
+        if sz < min_size_voxels:
+            need = min_size_voxels - sz
+            lower[d] = need // 2
+            upper[d] = need - lower[d]
+            needs_pad = True
+
+    if not needs_pad:
+        return image
+
+    pad = sitk.ConstantPadImageFilter()
+    pad.SetPadLowerBound(lower)
+    pad.SetPadUpperBound(upper)
+    pad.SetConstant(constant)
+    return ImageWrapper(pad.Execute(data))
+
+
 def create_reference_mask(seg_ref_image: ImageWrapper, scale_factor: float, dilation_radius: int) -> ImageWrapper:
     """
     Create a reference mask by resampling the segmentation reference image.

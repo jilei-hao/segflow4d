@@ -9,6 +9,7 @@ from segflow4d.processing.image_processing import (
     create_reference_mask,
     create_high_res_mask,
     clamp_scale_factor_for_min_size,
+    pad_image_to_min_size,
     FIREANTS_MIN_IMG_SIZE,
 )
 
@@ -62,6 +63,56 @@ class TestClampScaleFactorForMinSize:
         # Uses FIREANTS_MIN_IMG_SIZE by default.
         eff = clamp_scale_factor_for_min_size((57, 64, 64), 0.5)
         assert _resampled_size(57, eff) >= FIREANTS_MIN_IMG_SIZE
+
+
+class TestPadImageToMinSize:
+    def _img(self, size, spacing=(1.0, 1.0, 1.0), origin=(0.0, 0.0, 0.0)):
+        # size is (x, y, z); numpy array is (z, y, x)
+        arr = np.ones(tuple(reversed(size)), dtype=np.float32)
+        img = sitk.GetImageFromArray(arr)
+        img.SetSpacing(spacing)
+        img.SetOrigin(origin)
+        return ImageWrapper(img)
+
+    def test_no_op_when_all_dims_meet_floor(self):
+        img = self._img((40, 48, 64))
+        out = pad_image_to_min_size(img, FIREANTS_MIN_IMG_SIZE)
+        assert list(out.get_data().GetSize()) == [40, 48, 64]
+
+    def test_thin_dim_is_padded_to_floor(self):
+        img = self._img((64, 64, 28))  # z below the 32 floor
+        out = pad_image_to_min_size(img, 32)
+        assert list(out.get_data().GetSize()) == [64, 64, 32]
+
+    def test_all_dims_padded_when_all_below_floor(self):
+        img = self._img((10, 12, 8))
+        out = pad_image_to_min_size(img, 32)
+        assert list(out.get_data().GetSize()) == [32, 32, 32]
+
+    def test_symmetric_padding_preserves_physical_position(self):
+        # ConstantPad shifts the origin so existing voxels keep their physical
+        # location: a lower pad of L voxels moves the origin back by L*spacing.
+        spacing = (2.0, 2.0, 2.0)
+        img = self._img((64, 64, 28), spacing=spacing, origin=(0.0, 0.0, 0.0))
+        out = pad_image_to_min_size(img, 32)
+        need = 32 - 28
+        lower = need // 2  # = 2
+        assert out.get_data().GetOrigin()[2] == pytest.approx(-lower * spacing[2])
+        # spacing/direction unchanged
+        assert out.get_data().GetSpacing() == spacing
+
+    def test_padding_uses_constant_fill(self):
+        img = self._img((64, 64, 28))
+        out = pad_image_to_min_size(img, 32, constant=0.0)
+        arr = sitk.GetArrayFromImage(out.get_data())  # (z, y, x)
+        # first padded z-slice is all background, interior is the original ones
+        assert np.all(arr[0] == 0.0)
+        assert np.all(arr[2:30] == 1.0)
+
+    def test_floor_zero_disables_padding(self):
+        img = self._img((8, 8, 8))
+        out = pad_image_to_min_size(img, 0)
+        assert list(out.get_data().GetSize()) == [8, 8, 8]
 
 
 class TestCreateReferenceMask:

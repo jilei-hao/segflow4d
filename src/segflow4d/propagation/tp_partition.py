@@ -8,6 +8,7 @@ from segflow4d.processing.image_processing import (
     create_reference_mask,
     create_high_res_mask,
     clamp_scale_factor_for_min_size,
+    pad_image_to_min_size,
     FIREANTS_MIN_IMG_SIZE,
 )
 from segflow4d.propagation.tp_partition_input import TPPartitionInput
@@ -61,6 +62,11 @@ class TPPartition:
 
             logger.info(f"Resampling timepoint {tp} image to low resolution for TPPartition")
             tp_image_low_res = ih.resample(tp_image, scale_factor=effective_lowres_factor, interpolation=InterpolationType.LINEAR)
+            # Pad any natively-thin dim up to FireANTs' MIN_IMG_SIZE. The clamp
+            # above stops downsampling from going sub-floor, but a dimension whose
+            # native size is already below the floor can only be rescued by
+            # padding (see pad_image_to_min_size). No-op for well-sized volumes.
+            tp_image_low_res = pad_image_to_min_size(tp_image_low_res, FIREANTS_MIN_IMG_SIZE)
 
             tp_data_dict[tp] = TPData(image=tp_image, image_low_res=tp_image_low_res)
 
@@ -74,6 +80,10 @@ class TPPartition:
 
         logger.info(f"Creating reference mask for timepoint {self._input.tp_ref} in TPPartition")
         mask_ref_lr = create_reference_mask(tp_data_dict[self._input.tp_ref].segmentation, scale_factor=effective_lowres_factor, dilation_radius=self._options.dilation_radius)
+        # Pad the low-res mask to the same floor as the low-res images so the
+        # fixed/moving pair handed to FireANTs stays co-gridded and at/above
+        # MIN_IMG_SIZE (the mask shares the low-res grid geometry).
+        mask_ref_lr = pad_image_to_min_size(mask_ref_lr, FIREANTS_MIN_IMG_SIZE)
         tp_data_dict[self._input.tp_ref].mask_low_res = mask_ref_lr
         tp_data_dict[self._input.tp_ref].mask_high_res = create_high_res_mask(ref_seg_image=self._input.seg_ref, low_res_mask=mask_ref_lr)
 
