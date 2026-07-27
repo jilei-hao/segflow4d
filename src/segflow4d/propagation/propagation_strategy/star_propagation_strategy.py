@@ -31,6 +31,7 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
                 img_moving=tp_input_data[ref_tp].image,
                 img_to_reslice=tp_input_data[ref_tp].resliced_image,
                 mesh_to_reslice=tp_input_data[ref_tp].segmentation_mesh,
+                additional_meshes_to_reslice=tp_input_data[ref_tp].additional_meshes,
                 options=options,
                 mask_fixed=tp_input_data[target_tp].mask,
                 mask_moving=tp_input_data[ref_tp].mask
@@ -55,8 +56,9 @@ class StarPropagationStrategy(AbstractPropagationStrategy):
         for target_tp, result in results.items():
             tp_input_data[target_tp].resliced_image = result.resliced_image
             tp_input_data[target_tp].resliced_segmentation_mesh = result.resliced_segmentation_mesh
+            tp_input_data[target_tp].resliced_meshes = result.resliced_meshes
             tp_input_data[target_tp].warp_image = result.warp_image
-    
+
         return tp_input_data
 
     def get_strategy_name(self) -> str:

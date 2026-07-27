@@ -215,12 +215,20 @@ pip install -e .
 
 # 3. Install FireANTs from the MPS branch — do NOT run segflow4d-install-fireants
 #    (that builds the CUDA fused ops and needs nvcc + an NVIDIA GPU)
-pip install "git+https://github.com/jilei-hao/FireANTs.git@experiment/mps"
+git clone -b experiment/mps https://github.com/jilei-hao/FireANTs.git
+pip install -e FireANTs
+
+# 4. Install the fused ops Metal extension (REQUIRED) — setup.py auto-selects
+#    the Metal backend on darwin
+cd FireANTs/fused_ops && pip install . --no-build-isolation
+python -c "import fireants_fused_ops as f; print(f.__backend__)"  # → metal
 ```
 
 The `experiment/mps` branch is intentionally **unpinned and unmerged**. SegFlow4D
 autodetects the accelerator and picks MPS when no CUDA device is present (no device
-flag needed). `fireants_fused_ops` is CUDA-only and is not installed on this track.
+flag needed). `fireants_fused_ops` is **required on MPS too** — the branch ships a
+Metal backend for it; without it, FireANTs falls back to `torch.grid_sample`, whose
+3D backward raises `NotImplementedError` on MPS and registration fails outright.
 
 For CUDA/PyTorch compatibility details, see README.md.
 

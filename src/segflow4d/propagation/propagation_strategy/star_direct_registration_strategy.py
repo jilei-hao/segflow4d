@@ -40,6 +40,7 @@ class StarDirectRegistrationStrategy(AbstractPropagationStrategy):
                 img_moving=tp_input_data[ref_tp].image,
                 img_to_reslice=tp_input_data[ref_tp].resliced_image,
                 mesh_to_reslice=tp_input_data[ref_tp].segmentation_mesh,
+                additional_meshes_to_reslice=tp_input_data[ref_tp].additional_meshes,
                 options=options,
                 mask_fixed=None,
                 mask_moving=None,
@@ -65,6 +66,7 @@ class StarDirectRegistrationStrategy(AbstractPropagationStrategy):
             # per-timepoint output, so mirror the mesh there as well (matches
             # SASDPropagationStrategy's pattern).
             tp_input_data[target_tp].segmentation_mesh = result.resliced_segmentation_mesh
+            tp_input_data[target_tp].resliced_meshes = result.resliced_meshes
             tp_input_data[target_tp].warp_image = result.warp_image
 
         return tp_input_data

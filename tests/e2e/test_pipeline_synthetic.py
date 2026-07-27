@@ -20,6 +20,8 @@ import SimpleITK as sitk
 
 from segflow4d.common.types.propagation_input import PropagationInputFactory
 from segflow4d.propagation.propagation_pipeline import PropagationPipeline
+from segflow4d.propagation.tp_partition import TPPartition
+from segflow4d.processing.image_processing import FIREANTS_MIN_IMG_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +108,26 @@ def _flush_async_writer():
     aw_mod.async_writer.flush()
 
 
-def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
+def _make_ref_mesh(tmp_path):
+    """Write a synthetic surface mesh (.vtp) roughly co-located with the ref
+    seg sphere, for verifying additional_meshes warping. Returns (path, n_pts)."""
+    import vtk
+    from segflow4d.utility.mesh_helper.mesh_helper import write_polydata
+
+    src = vtk.vtkSphereSource()
+    cz, cy, cx = SHAPE_ZYX[0] // 2, SHAPE_ZYX[1] // 2, SHAPE_ZYX[2] // 2
+    src.SetCenter(float(cx), float(cy), float(cz))
+    src.SetRadius(5.0)
+    src.SetThetaResolution(16)
+    src.SetPhiResolution(16)
+    src.Update()
+    polydata = src.GetOutput()
+    mesh_path = str(tmp_path / "ref_mesh.vtp")
+    write_polydata(polydata, mesh_path)
+    return mesh_path, polydata.GetNumberOfPoints()
+
+
+def _build_input(img_path, seg_path, out_dir, write_to_disk=True, additional_meshes=None):
     """Build a PropagationInput using the FireANTs (GPU) backend."""
     os.makedirs(out_dir, exist_ok=True)
     return (
@@ -116,7 +137,7 @@ def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
             tp_ref=1,
             tp_target=[2, 3],
             seg_ref_path=seg_path,
-            additional_meshes_ref=None,
+            additional_meshes_ref=additional_meshes,
         )
         .set_options(
             lowres_factor=2.0,
@@ -135,7 +156,8 @@ def _build_input(img_path, seg_path, out_dir, write_to_disk=True):
 
 
 def _build_input_greedy(img_path, seg_path, out_dir, write_to_disk=True,
-                        affine_iterations=None, deformable_iterations=None, **backend_kwargs):
+                        affine_iterations=None, deformable_iterations=None,
+                        additional_meshes=None, **backend_kwargs):
     """Build a PropagationInput using the Greedy (CPU) backend."""
     if affine_iterations is None:
         affine_iterations = [2]
@@ -149,7 +171,7 @@ def _build_input_greedy(img_path, seg_path, out_dir, write_to_disk=True,
             tp_ref=1,
             tp_target=[2, 3],
             seg_ref_path=seg_path,
-            additional_meshes_ref=None,
+            additional_meshes_ref=additional_meshes,
         )
         .set_options(
             lowres_factor=2.0,
@@ -166,9 +188,137 @@ def _build_input_greedy(img_path, seg_path, out_dir, write_to_disk=True,
     )
 
 
+def _make_ref_mesh_obj():
+    """Build the same synthetic ref-seg-sphere surface as ``_make_ref_mesh`` but
+    return it as an in-memory vtkPolyData (no disk write). Returns (polydata, n_pts)."""
+    import vtk
+
+    src = vtk.vtkSphereSource()
+    cz, cy, cx = SHAPE_ZYX[0] // 2, SHAPE_ZYX[1] // 2, SHAPE_ZYX[2] // 2
+    src.SetCenter(float(cx), float(cy), float(cz))
+    src.SetRadius(5.0)
+    src.SetThetaResolution(16)
+    src.SetPhiResolution(16)
+    src.Update()
+    polydata = src.GetOutput()
+    return polydata, polydata.GetNumberOfPoints()
+
+
+def _build_input_greedy_in_memory(out_dir, additional_meshes=None):
+    """Build a PropagationInput via the in-memory factory API (Greedy backend).
+
+    Mirrors ``_build_input_greedy`` but feeds the 4-D image, ref segmentation,
+    and additional meshes as objects — exactly the path the avrp-handler uses.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    return (
+        PropagationInputFactory()
+        .set_image_4d(_make_4d_image())
+        .add_tp_input_group(
+            tp_ref=1,
+            tp_target=[2, 3],
+            seg_ref=_make_seg_ref(),
+            additional_meshes_ref=additional_meshes,
+        )
+        .set_options(
+            lowres_factor=2.0,
+            registration_backend="GREEDY",
+            dilation_radius=2,
+            write_result_to_disk=True,
+            output_directory=out_dir,
+            minimum_required_vram_gb=0,
+            affine_iterations=[2],
+            deformable_iterations=[2],
+        )
+        .build()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+class TestLowresMinImgSizeGuard:
+    """Regression for the FireANTs MIN_IMG_SIZE crash on small spatial dims.
+
+    A volume whose smallest dim drops below FireANTs' MIN_IMG_SIZE (~32 vox)
+    after the low-res downsample used to crash the low-res mask registration
+    with a tensor shape mismatch (FireANTs upsampled the fixed/moving images
+    inconsistently). The pipeline must clamp the effective low-res factor so no
+    spatial dim falls below the floor.
+
+    This exercises only TPPartition's data preparation (resample + reference
+    mask), which is backend-agnostic, so it runs on CPU without a GPU or
+    picsl-greedy.
+    """
+
+    # native z=40; at the requested factor 0.5 -> 20 < 32 without the guard,
+    # but 40 >= 32 so clamping can rescue it (-> factor >= 0.8 -> z >= 32).
+    SMALL_SHAPE_ZYX = (40, 48, 48)
+
+    def _build_partition(self, lowres_factor, tmp_path):
+        out_dir = str(tmp_path / "output")
+        os.makedirs(out_dir, exist_ok=True)
+        prop_input = (
+            PropagationInputFactory()
+            .set_image_4d(_make_4d_image(shape_zyx=self.SMALL_SHAPE_ZYX))
+            .add_tp_input_group(
+                tp_ref=1,
+                tp_target=[2, 3],
+                seg_ref=_make_seg_ref(shape_zyx=self.SMALL_SHAPE_ZYX),
+                additional_meshes_ref=None,
+            )
+            .set_options(
+                lowres_factor=lowres_factor,
+                registration_backend="GREEDY",
+                dilation_radius=2,
+                write_result_to_disk=False,
+                output_directory=out_dir,
+                minimum_required_vram_gb=0,
+            )
+            .build()
+        )
+        group = prop_input.tp_input_groups[0]
+        return TPPartition(
+            input=group,
+            image_4d=prop_input.image_4d,
+            options=prop_input.options,
+        )
+
+    def test_lowres_images_stay_at_or_above_min_img_size(self, tmp_path):
+        partition = self._build_partition(lowres_factor=0.5, tmp_path=tmp_path)
+        for tp, tp_data in partition._tp_data.items():
+            assert tp_data.image_low_res is not None
+            size = tp_data.image_low_res.get_data().GetSize()
+            assert min(size) >= FIREANTS_MIN_IMG_SIZE, (
+                f"tp {tp}: low-res image size {size} drops below "
+                f"MIN_IMG_SIZE={FIREANTS_MIN_IMG_SIZE}"
+            )
+
+    def test_reference_mask_stays_co_gridded_with_lowres_image(self, tmp_path):
+        partition = self._build_partition(lowres_factor=0.5, tmp_path=tmp_path)
+        ref_tp = partition._input.tp_ref
+        ref_data = partition._tp_data[ref_tp]
+        assert ref_data.mask_low_res is not None
+        mask_size = ref_data.mask_low_res.get_data().GetSize()
+        image_size = ref_data.image_low_res.get_data().GetSize()
+        assert min(mask_size) >= FIREANTS_MIN_IMG_SIZE
+        # The low-res mask is the moving label for the mask stage; it must share
+        # the low-res image grid so the warp field reslices it correctly.
+        assert mask_size == image_size, (
+            f"low-res mask {mask_size} not co-gridded with image {image_size}"
+        )
+
+    def test_upsampling_factor_left_unchanged(self, tmp_path):
+        """When the requested factor already keeps dims above the floor, the
+        low-res grid follows the requested factor (no spurious clamping)."""
+        partition = self._build_partition(lowres_factor=2.0, tmp_path=tmp_path)
+        ref_data = partition._tp_data[partition._input.tp_ref]
+        size = ref_data.image_low_res.get_data().GetSize()
+        # 48 * 2 = 96, 40 * 2 = 80 -> all well above the floor and exactly 2x.
+        expected = tuple(s * 2 for s in self.SMALL_SHAPE_ZYX[::-1])  # zyx -> xyz
+        assert size == expected, f"expected {expected}, got {size}"
+
 
 @pytest.mark.gpu
 class TestPipelineSyntheticOutputFiles:
@@ -215,6 +365,35 @@ class TestPipelineSyntheticOutputFiles:
         assert size[0] == SHAPE_ZYX[2], f"X dim mismatch: {size[0]} vs {SHAPE_ZYX[2]}"
         assert size[1] == SHAPE_ZYX[1], f"Y dim mismatch: {size[1]} vs {SHAPE_ZYX[1]}"
         assert size[2] == SHAPE_ZYX[0], f"Z dim mismatch: {size[2]} vs {SHAPE_ZYX[0]}"
+
+
+@pytest.mark.gpu
+class TestPipelineSyntheticAdditionalMeshes:
+    def test_pipeline_warps_additional_meshes(self, tmp_path):
+        """additional_meshes provided on the ref TP must be warped to every TP
+        and written as additional-mesh/<name>_tp-NNN.vtp with vertex count preserved."""
+        import vtk
+        from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
+
+        img_path, seg_path = _write_images(tmp_path)
+        mesh_path, n_pts = _make_ref_mesh(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input(
+            img_path, seg_path, out_dir, write_to_disk=True,
+            additional_meshes={"model-ml_pi-01": mesh_path},
+        )
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        for tp in (1, 2, 3):
+            out_mesh = os.path.join(out_dir, "additional-mesh", f"model-ml_pi-01_tp-{tp:03d}.vtp")
+            assert os.path.isfile(out_mesh), f"warped additional mesh missing for tp {tp}: {out_mesh}"
+            pd = read_polydata(out_mesh)
+            assert pd.GetNumberOfPoints() == n_pts, (
+                f"tp {tp}: vertex count {pd.GetNumberOfPoints()} != input {n_pts} "
+                "(warping must preserve topology)"
+            )
 
 
 @pytest.mark.gpu
@@ -324,6 +503,40 @@ class TestPipelineSyntheticGreedyOutputFiles:
 
 
 @pytest.mark.greedy
+class TestPipelineSyntheticGreedyAdditionalMeshes:
+    """Verify additional_meshes warping on the Greedy CPU backend."""
+
+    @pytest.fixture(autouse=True)
+    def skip_if_no_greedy(self):
+        pytest.importorskip(
+            "picsl_greedy",
+            reason="picsl-greedy not installed — skipping Greedy e2e tests",
+        )
+
+    def test_pipeline_warps_additional_meshes(self, tmp_path):
+        from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
+
+        img_path, seg_path = _write_images(tmp_path)
+        mesh_path, n_pts = _make_ref_mesh(tmp_path)
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input_greedy(
+            img_path, seg_path, out_dir, write_to_disk=True,
+            additional_meshes={"model-ml_pi-01": mesh_path},
+        )
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        for tp in (1, 2, 3):
+            out_mesh = os.path.join(out_dir, "additional-mesh", f"model-ml_pi-01_tp-{tp:03d}.vtp")
+            assert os.path.isfile(out_mesh), f"warped additional mesh missing for tp {tp}: {out_mesh}"
+            pd = read_polydata(out_mesh)
+            assert pd.GetNumberOfPoints() == n_pts, (
+                f"tp {tp}: vertex count {pd.GetNumberOfPoints()} != input {n_pts}"
+            )
+
+
+@pytest.mark.greedy
 class TestPipelineSyntheticGreedySegQuality:
     """Verify propagation quality when using the Greedy CPU backend.
 
@@ -387,4 +600,50 @@ class TestPipelineSyntheticGreedySegQuality:
             dice = result.macro_avg.dice
             assert dice >= 0.50, (
                 f"TP {tp}: propagated Dice {dice:.3f} < 0.50 threshold"
+            )
+
+
+@pytest.mark.greedy
+class TestPipelineSyntheticInMemoryAPI:
+    """Drive the full pipeline through the in-memory factory API (objects, not
+    file paths) — the path the avrp-handler S4 flow uses. Greedy/CPU so it runs
+    without an accelerator."""
+
+    @pytest.fixture(autouse=True)
+    def skip_if_no_greedy(self):
+        pytest.importorskip(
+            "picsl_greedy",
+            reason="picsl-greedy not installed — skipping Greedy e2e tests",
+        )
+
+    def test_in_memory_pipeline_creates_4d_outputs(self, tmp_path):
+        out_dir = str(tmp_path / "output")
+        prop_input = _build_input_greedy_in_memory(out_dir)
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        assert os.path.isfile(os.path.join(out_dir, "seg-4d.nii.gz"))
+        assert os.path.isfile(os.path.join(out_dir, "image-4d.nii.gz"))
+
+    def test_in_memory_pipeline_warps_in_memory_meshes(self, tmp_path):
+        """An in-memory vtkPolyData passed as additional_meshes_ref must be warped
+        to every TP and written as additional-mesh/<name>_tp-NNN.vtp with vertex
+        count preserved."""
+        from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
+
+        mesh_obj, n_pts = _make_ref_mesh_obj()
+        out_dir = str(tmp_path / "output")
+
+        prop_input = _build_input_greedy_in_memory(
+            out_dir, additional_meshes={"model-ml_pi-01": mesh_obj},
+        )
+        PropagationPipeline(prop_input).run()
+        _flush_async_writer()
+
+        for tp in (1, 2, 3):
+            out_mesh = os.path.join(out_dir, "additional-mesh", f"model-ml_pi-01_tp-{tp:03d}.vtp")
+            assert os.path.isfile(out_mesh), f"warped additional mesh missing for tp {tp}: {out_mesh}"
+            pd = read_polydata(out_mesh)
+            assert pd.GetNumberOfPoints() == n_pts, (
+                f"tp {tp}: vertex count {pd.GetNumberOfPoints()} != input {n_pts}"
             )

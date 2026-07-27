@@ -77,6 +77,9 @@ def _make_mock_ref_input() -> MagicMock:
     ref = MagicMock(spec=TPPartitionInput)
     ref.seg_ref = _make_image_wrapper()
     ref.seg_mesh_ref = None
+    # additional_meshes_ref is an instance attribute (not in the class spec), so
+    # the pipeline's S4 access (ref_input.additional_meshes_ref) needs it stubbed.
+    ref.additional_meshes_ref = None
     return ref
 
 

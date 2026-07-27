@@ -13,6 +13,7 @@ from segflow4d.common.types.image_wrapper import ImageWrapper
 from segflow4d.common.types.propagation_options import PropagationOptions
 from segflow4d.propagation.tp_partition import TPPartition
 from segflow4d.propagation.tp_partition_input import TPPartitionInput
+from segflow4d.processing.image_processing import FIREANTS_MIN_IMG_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -153,3 +154,34 @@ class TestTPPartitionInitialisation:
         arr = sitk.GetArrayFromImage(ref_data.mask_low_res.get_data())
         unique = set(np.unique(arr).tolist())
         assert unique.issubset({0, 1}), f"Non-binary values: {unique}"
+
+
+class TestTPPartitionMinSizeRobustness:
+    """The natively-thin-volume fix (MIN_IMG_SIZE pad): a 4D image with a spatial
+    dim below FireANTs' floor must still yield low-res images/mask that clear the
+    floor on every axis, so FireANTs doesn't silently/inconsistently upsample and
+    crash with a tensor-shape mismatch. The default fixture is z=16 (thin)."""
+
+    def test_low_res_images_meet_min_size_floor(self, tp_partition_input, image_4d_5tp, options):
+        partition = TPPartition(tp_partition_input, image_4d_5tp, options)
+        for tp, data in partition._tp_data.items():
+            size = data.image_low_res.get_data().GetSize()
+            assert all(s >= FIREANTS_MIN_IMG_SIZE for s in size), (
+                f"TP {tp} low-res size {size} has a dim below MIN_IMG_SIZE"
+            )
+
+    def test_low_res_mask_meets_min_size_floor(self, tp_partition_input, image_4d_5tp, options):
+        partition = TPPartition(tp_partition_input, image_4d_5tp, options)
+        ref_data = partition._tp_data[tp_partition_input.tp_ref]
+        size = ref_data.mask_low_res.get_data().GetSize()
+        assert all(s >= FIREANTS_MIN_IMG_SIZE for s in size), (
+            f"low-res mask size {size} has a dim below MIN_IMG_SIZE"
+        )
+
+    def test_thin_volume_low_res_and_mask_are_cogridded(self, tp_partition_input, image_4d_5tp, options):
+        """Padding must keep the fixed/moving pair on the same grid."""
+        partition = TPPartition(tp_partition_input, image_4d_5tp, options)
+        ref = tp_partition_input.tp_ref
+        img_lr = partition._tp_data[ref].image_low_res.get_data()
+        mask_lr = partition._tp_data[ref].mask_low_res.get_data()
+        assert img_lr.GetSize() == mask_lr.GetSize()

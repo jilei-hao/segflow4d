@@ -4,7 +4,13 @@ from segflow4d.common.types.tp_data import TPData
 from segflow4d.common.types.image_wrapper import ImageWrapper
 from segflow4d.common.types.mesh_wrapper import MeshWrapper
 from segflow4d.utility.image_helper.image_helper_factory import create_image_helper
-from segflow4d.processing.image_processing import create_reference_mask, create_high_res_mask
+from segflow4d.processing.image_processing import (
+    create_reference_mask,
+    create_high_res_mask,
+    clamp_scale_factor_for_min_size,
+    pad_image_to_min_size,
+    FIREANTS_MIN_IMG_SIZE,
+)
 from segflow4d.propagation.tp_partition_input import TPPartitionInput
 from logging import getLogger
 from segflow4d.utility.file_writer import async_writer
@@ -30,12 +36,37 @@ class TPPartition:
 
         ih = create_image_helper()
 
+        # Clamp the low-res factor so no spatial dim falls below FireANTs'
+        # MIN_IMG_SIZE after downsampling. Without this, a small dimension
+        # (e.g. z=57 at factor 0.5 -> 28) makes FireANTs silently — and
+        # inconsistently — upsample the fixed/moving images, crashing the
+        # low-res mask registration with a tensor shape mismatch. This mirrors
+        # the >= MIN_IMG_SIZE guard the roi-crop path already applies to the
+        # high-res stage. All timepoints share the 4D image's spatial geometry,
+        # so a single effective factor keeps the low-res images and the
+        # reference mask co-gridded.
+        spatial_size = image_4d.get_data().GetSize()[:3]
+        effective_lowres_factor = clamp_scale_factor_for_min_size(
+            spatial_size, self._options.lowres_scale_factor
+        )
+        if effective_lowres_factor != self._options.lowres_scale_factor:
+            logger.warning(
+                f"lowres_scale_factor {self._options.lowres_scale_factor} would shrink "
+                f"image {spatial_size} below FireANTs MIN_IMG_SIZE={FIREANTS_MIN_IMG_SIZE}; "
+                f"clamping low-res factor to {effective_lowres_factor:.4f}"
+            )
+
         for tp in all_timepoints:
             logger.info(f"Extracting timepoint {tp} from 4D image for TPPartition")
             tp_image = ih.extract_timepoint_image(image_4d, tp)
 
             logger.info(f"Resampling timepoint {tp} image to low resolution for TPPartition")
-            tp_image_low_res = ih.resample(tp_image, scale_factor=self._options.lowres_scale_factor, interpolation=InterpolationType.LINEAR)
+            tp_image_low_res = ih.resample(tp_image, scale_factor=effective_lowres_factor, interpolation=InterpolationType.LINEAR)
+            # Pad any natively-thin dim up to FireANTs' MIN_IMG_SIZE. The clamp
+            # above stops downsampling from going sub-floor, but a dimension whose
+            # native size is already below the floor can only be rescued by
+            # padding (see pad_image_to_min_size). No-op for well-sized volumes.
+            tp_image_low_res = pad_image_to_min_size(tp_image_low_res, FIREANTS_MIN_IMG_SIZE)
 
             tp_data_dict[tp] = TPData(image=tp_image, image_low_res=tp_image_low_res)
 
@@ -48,7 +79,11 @@ class TPPartition:
         tp_data_dict[self._input.tp_ref].segmentation = self._input.seg_ref
 
         logger.info(f"Creating reference mask for timepoint {self._input.tp_ref} in TPPartition")
-        mask_ref_lr = create_reference_mask(tp_data_dict[self._input.tp_ref].segmentation, scale_factor=self._options.lowres_scale_factor, dilation_radius=self._options.dilation_radius)
+        mask_ref_lr = create_reference_mask(tp_data_dict[self._input.tp_ref].segmentation, scale_factor=effective_lowres_factor, dilation_radius=self._options.dilation_radius)
+        # Pad the low-res mask to the same floor as the low-res images so the
+        # fixed/moving pair handed to FireANTs stays co-gridded and at/above
+        # MIN_IMG_SIZE (the mask shares the low-res grid geometry).
+        mask_ref_lr = pad_image_to_min_size(mask_ref_lr, FIREANTS_MIN_IMG_SIZE)
         tp_data_dict[self._input.tp_ref].mask_low_res = mask_ref_lr
         tp_data_dict[self._input.tp_ref].mask_high_res = create_high_res_mask(ref_seg_image=self._input.seg_ref, low_res_mask=mask_ref_lr)
 

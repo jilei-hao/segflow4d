@@ -182,6 +182,7 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         init_affine_matrix=None,
         mask_fixed: ImageWrapper | None = None,
         mask_moving: ImageWrapper | None = None,
+        additional_meshes_to_reslice: dict | None = None,
     ) -> TPData:
         """Run deformable registration (optionally initialized with a 4x4 numpy affine) and reslice.
 
@@ -293,9 +294,20 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
                 )
                 logger.info(f"Mesh warping completed in {time() - t3:.2f}s")
 
+            resliced_additional_meshes = dict[str, MeshWrapper]()
+            if additional_meshes_to_reslice:
+                logger.info(f"Warping {len(additional_meshes_to_reslice)} additional mesh(es) on CPU ...")
+                for mesh_name, mesh in additional_meshes_to_reslice.items():
+                    resliced_additional_meshes[mesh_name] = warp_mesh_vertices_cpu(
+                        mesh_wrapper=mesh,
+                        warp_field_sitk=warp_field_sitk,
+                        img_fixed_sitk=itk_fixed,
+                    )
+
             return TPData(
                 resliced_image=resliced_image,
                 resliced_segmentation_mesh=resliced_mesh,
+                resliced_meshes=resliced_additional_meshes,
                 warp_image=ImageWrapper(warp_field_sitk),
             )
 
@@ -316,6 +328,7 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         options: PropagationOptions,
         mask_fixed: ImageWrapper | None = None,
         mask_moving: ImageWrapper | None = None,
+        additional_meshes_to_reslice: dict | None = None,
     ) -> TPData:
         """
         Affine + deformable registration followed by segmentation / mesh reslicing.
@@ -474,9 +487,20 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             )
             logger.info(f"Mesh warping completed in {time() - t3:.2f}s")
 
+        resliced_additional_meshes = dict[str, MeshWrapper]()
+        if additional_meshes_to_reslice:
+            logger.info(f"Warping {len(additional_meshes_to_reslice)} additional mesh(es) on CPU ...")
+            for mesh_name, mesh in additional_meshes_to_reslice.items():
+                resliced_additional_meshes[mesh_name] = warp_mesh_vertices_cpu(
+                    mesh_wrapper=mesh,
+                    warp_field_sitk=warp_field_sitk,
+                    img_fixed_sitk=itk_fixed,
+                )
+
         return TPData(
             resliced_image=resliced_image,
             resliced_segmentation_mesh=resliced_mesh,
+            resliced_meshes=resliced_additional_meshes,
             warp_image=ImageWrapper(warp_field_sitk),
             affine_matrix=affine_matrix,
         )

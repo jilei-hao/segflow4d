@@ -53,7 +53,15 @@ class TestIdentityWarp:
         centre.  The true identity grid must map each voxel (d, h, w) to its
         own normalised coordinate (x, y, z).
         """
-        device = torch.device("cuda")
+        # gpu-marked tests run whenever a CUDA *or* MPS accelerator is present
+        # (see conftest); fall back to CPU otherwise. The warp math is
+        # device-independent, so don't hardcode CUDA.
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
         shape_zyx = (16, 32, 32)
         D, H, W = shape_zyx
         spacing = (1.0, 1.0, 1.0)
