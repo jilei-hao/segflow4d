@@ -251,7 +251,7 @@ class PropagationPipeline:
                             resliced_image, ref_input.seg_ref, roi_crop_start
                         )
                     result[tp].segmentation = resliced_image
-                resliced_mesh = propagated_data_hr[tp].segmentation_mesh
+                resliced_mesh = propagated_data_hr[tp].resliced_segmentation_mesh
                 if resliced_mesh is not None:
                     result[tp].segmentation_mesh = resliced_mesh
                 resliced_additional = propagated_data_hr[tp].resliced_meshes
