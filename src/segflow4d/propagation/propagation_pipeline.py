@@ -195,7 +195,13 @@ class PropagationPipeline:
                         image_hr = crop_to_bbox(image_hr, roi_crop_start, roi_crop_size)
                     if mask_hr is not None:
                         mask_hr = crop_to_bbox(mask_hr, roi_crop_start, roi_crop_size)
-                tp_input_data_hr[tp] = TPData(image=image_hr, mask=mask_hr)
+                # The bbox above already used mask_high_res; passing the mask on
+                # to the registration itself is a separate decision (see
+                # PropagationOptions.mask_high_res_registration).
+                tp_input_data_hr[tp] = TPData(
+                    image=image_hr,
+                    mask=mask_hr if options.mask_high_res_registration else None,
+                )
 
             tp_ref = tp_list[0]
             seg_ref_hr = ref_input.seg_ref.deepcopy()
