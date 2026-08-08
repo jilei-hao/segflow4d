@@ -32,6 +32,7 @@ class PropagationPipeline:
         self._options = input.options
         self._input = input
         self._tp_partitions = None
+        self._n_timepoints = None
 
         # initialize registration manager
         self._registration_manager = RegistrationManager(
@@ -46,7 +47,11 @@ class PropagationPipeline:
     def _prepare_data(self):
         if self._input.image_4d is None:
             raise ValueError("4D image is not provided in the input.")
-        
+
+        # Capture the series length before image_4d is released below; the
+        # cyclic chain builder needs it to know where the loop wraps.
+        self._n_timepoints = self._input.image_4d.get_data().GetSize()[3]
+
         self._tp_partitions = []
         for tp_partition_input in self._input.tp_input_groups:
             tp_partition = TPPartition(
@@ -96,7 +101,8 @@ class PropagationPipeline:
                 tp_input_data = None
             else:
                 logger.debug(f"[Thread {thread_id}] Starting low-res propagation")
-                if combo == PropagationStrategyCombo.SEQUENTIAL_STAR:
+                if combo in (PropagationStrategyCombo.SEQUENTIAL_STAR,
+                             PropagationStrategyCombo.SEQUENTIAL_SASD):
                     strategy_lr_name = PropagationStrategyName.SEQUENTIAL
                 elif combo == PropagationStrategyCombo.SASD_STAR:
                     strategy_lr_name = PropagationStrategyName.SASD
@@ -140,7 +146,15 @@ class PropagationPipeline:
                 tp_input_data = None
                 propagated_data_lr = None
 
-                strategy_hr_name = PropagationStrategyName.STAR
+                # SASD at high res composes the sequential affine chain
+                # ref -> ... -> target and hands it to the deformable star as an
+                # initialiser, instead of asking one registration to span the
+                # whole ref -> target jump unaided.
+                strategy_hr_name = (
+                    PropagationStrategyName.SASD
+                    if combo == PropagationStrategyCombo.SEQUENTIAL_SASD
+                    else PropagationStrategyName.STAR
+                )
 
             # ===== HIGH RES PROPAGATION =====
             logger.debug(f"[Thread {thread_id}] Starting high-res propagation ({strategy_hr_name})")
@@ -280,6 +294,85 @@ class PropagationPipeline:
         return result
 
 
+    @staticmethod
+    def _warn_on_chain_gaps(direction: str, chain: list[int]):
+        """Log any step in a chain that is not between adjacent timepoints.
+
+        A chain is only 'sequential' with respect to the group's own membership:
+        the plain numeric split below never checks that consecutive entries are
+        neighbouring frames. When two groups interleave in time, the chain
+        silently jumps across the frames it does not own — and the run still
+        reports success, just with bad output. Surfacing the jump is cheap.
+        """
+        for a, b in zip(chain, chain[1:]):
+            if abs(b - a) != 1:
+                logger.warning(
+                    f"{direction} chain step {a} -> {b} skips {abs(b - a) - 1} "
+                    f"timepoint(s). This registration must span the motion of "
+                    f"{abs(b - a)} frames in one step, which is a common source "
+                    f"of poor propagation. Consider regrouping, or "
+                    f"cyclic_time=True if the series wraps."
+                )
+
+    def _build_cyclic_chains(self, all_tps: list[int], tp_ref: int) -> tuple[list[int], list[int]]:
+        """Build forward/backward chains of strictly adjacent timepoints.
+
+        Walks outward from the reference one frame at a time and stops at the
+        first frame this group does not own, so a chain never jumps across
+        another group's frames. The walk wraps around the end of the series,
+        which is the whole point: it is what gives a group owning
+        ``... 19, 20, 1, 2`` a route to 1 and 2 (via 20) instead of an 11.9 mm
+        leap backwards from 7.
+
+        Where both directions can reach the same timepoint (a group spanning the
+        whole loop) the shorter route wins and the longer chain is truncated
+        there, so every timepoint is propagated exactly once.
+        """
+        n = self._n_timepoints
+        members = set(all_tps)
+
+        def walk(step: int) -> list[int]:
+            chain = [tp_ref]
+            seen = {tp_ref}
+            tp = tp_ref
+            while True:
+                nxt = (tp + step - 1) % n + 1  # timepoints are 1-based
+                if nxt in seen or nxt not in members:
+                    break
+                chain.append(nxt)
+                seen.add(nxt)
+                tp = nxt
+            return chain
+
+        forward, backward = walk(1), walk(-1)
+        fwd_pos = {tp: i for i, tp in enumerate(forward)}
+        bwd_pos = {tp: i for i, tp in enumerate(backward)}
+
+        def truncate(chain, own, other, keep_ties):
+            out = [chain[0]]
+            for tp in chain[1:]:
+                if tp in other and (other[tp] < own[tp]
+                                    or (other[tp] == own[tp] and not keep_ties)):
+                    break
+                out.append(tp)
+            return out
+
+        forward = truncate(forward, fwd_pos, bwd_pos, keep_ties=True)
+        backward = truncate(backward, bwd_pos, fwd_pos, keep_ties=False)
+
+        reached = set(forward) | set(backward)
+        orphaned = sorted(members - reached)
+        if orphaned:
+            raise ValueError(
+                f"cyclic_time is enabled but timepoint(s) {orphaned} in the group "
+                f"with reference {tp_ref} cannot be reached by a chain of adjacent "
+                f"frames from the reference (members: {sorted(members)}). They are "
+                f"separated from the reference by frames this group does not own. "
+                f"Failing rather than registering them across a large gap, which "
+                f"would silently produce bad segmentations."
+            )
+        return forward, backward
+
     def _run_partition(self, tp_partition: TPPartition):
         # create a list containing all time points
         all_tps = tp_partition._input.tp_target.copy()
@@ -287,13 +380,25 @@ class PropagationPipeline:
         all_tps = list(set(all_tps))  # remove duplicates
         all_tps.sort()
 
-        # divide into forward and backward time points
-        forward_tps = [tp for tp in all_tps if tp >= tp_partition._input.tp_ref]
-        backward_tps = [tp for tp in all_tps if tp <= tp_partition._input.tp_ref]
+        tp_ref = tp_partition._input.tp_ref
 
-        # sort time points
-        forward_tps.sort()
-        backward_tps.sort(reverse=True)
+        if self._options.cyclic_time:
+            forward_tps, backward_tps = self._build_cyclic_chains(all_tps, tp_ref)
+            logger.info(
+                f"cyclic_time: chains from reference {tp_ref} -- "
+                f"forward {forward_tps}, backward {backward_tps}"
+            )
+        else:
+            # divide into forward and backward time points
+            forward_tps = [tp for tp in all_tps if tp >= tp_ref]
+            backward_tps = [tp for tp in all_tps if tp <= tp_ref]
+
+            # sort time points
+            forward_tps.sort()
+            backward_tps.sort(reverse=True)
+
+            self._warn_on_chain_gaps("forward", forward_tps)
+            self._warn_on_chain_gaps("backward", backward_tps)
 
         # prepare propagation tasks
         tasks = []

@@ -128,10 +128,17 @@ def parse_arguments():
                              'the high-res registration, then uncrop the resliced segmentation '
                              'back to the reference frame. 0 disables ROI cropping (default).')
     parser.add_argument('--propagation-strategy-combo', type=str, default='sequential_star',
-                        choices=['sequential_star', 'sasd_star', 'direct_star'],
+                        choices=['sequential_star', 'sasd_star', 'sequential_sasd', 'direct_star'],
                         help='Strategy combo for lowres+highres stages (default: sequential_star). '
-                             'direct_star skips the low-res mask phase and runs direct '
+                             'sequential_sasd runs SASD at HIGH res, giving the deformable star a '
+                             'phase-chained affine initialiser instead of one unaided ref->target '
+                             'jump. direct_star skips the low-res mask phase and runs direct '
                              'ref->target registration only (baseline for comparisons).')
+    parser.add_argument('--cyclic-time', action='store_true',
+                        help='Treat the timepoint axis as a closed loop, so a chain may run off '
+                             'the end of the series and continue at timepoint 1. Needed when a '
+                             'group owns frames on both sides of the wrap (e.g. ...19, 20, 1, 2); '
+                             'without it those frames are reached by one large jump backwards.')
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
@@ -198,6 +205,7 @@ def main():
             minimum_required_vram_gb=config.get('minimum_required_vram_gb', 0),
             propagation_strategy_combo=config.get('propagation_strategy_combo', 'sequential_star'),
             roi_crop_padding_voxels=config.get('roi_crop_padding_voxels', 0),
+            cyclic_time=config.get('cyclic_time', False),
             **backend_options
         )
         
@@ -301,6 +309,7 @@ def main():
             debug_output_directory=args.debug_dir,
             propagation_strategy_combo=args.propagation_strategy_combo,
             roi_crop_padding_voxels=args.roi_crop_padding_voxels,
+            cyclic_time=args.cyclic_time,
             **cli_backend_options
         )
 

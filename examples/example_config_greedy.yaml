@@ -23,6 +23,14 @@ registration_backend_options:
   deformable_iterations: [100, 25, 10]
   use_float: true  # pass -float to greedy for single-precision computation (default: true)
   label_interpolation: "0.2vox"  # smoothing for LABEL reslice; accepts "0.2vox" or "0.5mm" (default: 0.2vox)
+cyclic_time: false
+# Treat the timepoint axis as a closed loop, so a propagation chain may run off
+# the end of the series and continue at timepoint 1 (and vice versa). Needed
+# when a tp_input_group owns frames on both sides of the wrap -- e.g. a gated
+# cardiac series where ref 8 owns ... 19, 20, 1, 2. Without it those wrapped
+# frames are reached by one large jump backwards across frames owned by another
+# group, which propagates badly. Only meaningful for genuinely cyclic
+# acquisitions, so it is off by default.
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:

@@ -80,6 +80,7 @@ class PropagationInputFactory:
                     minimum_required_vram_gb: int = 10,
                     propagation_strategy_combo: str = "sequential_star",
                     roi_crop_padding_voxels: int = 0,
+                    cyclic_time: bool = False,
                     **kwargs) -> 'PropagationInputFactory':
         '''
         Sets the propagation options. *kwargs are reserved for configuring different registration backends.
@@ -97,6 +98,7 @@ class PropagationInputFactory:
             registration_backend_options=kwargs,
             propagation_strategy_combo=propagation_strategy_combo,
             roi_crop_padding_voxels=roi_crop_padding_voxels,
+            cyclic_time=cyclic_time,
         )
 
         os.makedirs(output_directory, exist_ok=True)
