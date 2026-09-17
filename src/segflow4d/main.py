@@ -206,6 +206,7 @@ def main():
             propagation_strategy_combo=config.get('propagation_strategy_combo', 'sequential_star'),
             roi_crop_padding_voxels=config.get('roi_crop_padding_voxels', 0),
             cyclic_time=config.get('cyclic_time', False),
+            mask_high_res_registration=config.get('mask_high_res_registration', True),
             **backend_options
         )
         

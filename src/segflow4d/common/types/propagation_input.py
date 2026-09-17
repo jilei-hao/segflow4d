@@ -81,6 +81,7 @@ class PropagationInputFactory:
                     propagation_strategy_combo: str = "sequential_star",
                     roi_crop_padding_voxels: int = 0,
                     cyclic_time: bool = False,
+                    mask_high_res_registration: bool = True,
                     **kwargs) -> 'PropagationInputFactory':
         '''
         Sets the propagation options. *kwargs are reserved for configuring different registration backends.
@@ -99,6 +100,7 @@ class PropagationInputFactory:
             propagation_strategy_combo=propagation_strategy_combo,
             roi_crop_padding_voxels=roi_crop_padding_voxels,
             cyclic_time=cyclic_time,
+            mask_high_res_registration=mask_high_res_registration,
         )
 
         os.makedirs(output_directory, exist_ok=True)
