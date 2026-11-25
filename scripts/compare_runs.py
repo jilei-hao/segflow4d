@@ -2,19 +2,31 @@
 """Compare two segflow4d output directories: a frozen reference run and a candidate.
 
 This is the refactor gate. A behaviour-preserving change must reproduce the
-frozen run exactly on a machine where runs are deterministic (CUDA is
-bit-identical from run to run). When the outputs differ, the per-timepoint Dice
-and volume ratios show how far they moved.
+frozen run's segmentations and images exactly, and its meshes to within the
+run-to-run noise floor. When the outputs differ, the per-timepoint Dice and
+volume ratios show how far they moved.
+
+Why meshes get a tolerance: on Ludwig CUDA the label maps are bit-identical
+from run to run, but warped mesh vertices are not. They differ by about 1e-4 mm
+(float32 GPU reductions add up in a different order each run). Label
+interpolation absorbs that difference; continuous vertex positions don't.
+Set --mesh-tol-mm from a measured same-code rerun, not by guess.
 
 Voxel data and mesh point coordinates are compared, not file bytes: gzip headers
 carry timestamps, so the files differ even when the data is identical.
 
 Usage:
-    compare_runs.py REFERENCE_DIR CANDIDATE_DIR [--json OUT.json] [--quiet]
+    compare_runs.py REFERENCE_DIR CANDIDATE_DIR [--mesh-tol-mm TOL] [--json OUT.json] [--quiet]
+
+Verdicts:
+    IDENTICAL   every compared output is exactly equal
+    EQUIVALENT  seg-4d and image-4d are exactly equal, and every mesh has the same
+                topology with no vertex further than TOL mm from its reference
+    DIFFERENT   anything else
 
 Exit status:
-    0  every compared output is identical
-    1  the outputs differ
+    0  IDENTICAL or EQUIVALENT (the gate passes)
+    1  DIFFERENT
     2  the runs are not comparable (missing outputs, different shape or geometry)
 """
 
@@ -146,7 +158,7 @@ def _read_points(path: str) -> tuple[np.ndarray, int]:
     return np.asarray(coords, dtype=np.float64), poly.GetNumberOfCells()
 
 
-def compare_meshes(ref_dir: str, cand_dir: str) -> dict:
+def compare_meshes(ref_dir: str, cand_dir: str, tol_mm: float = 0.0) -> dict:
     ref_files, cand_files = _mesh_files(ref_dir), _mesh_files(cand_dir)
     only_ref = sorted(set(ref_files) - set(cand_files))
     only_cand = sorted(set(cand_files) - set(ref_files))
@@ -160,11 +172,17 @@ def compare_meshes(ref_dir: str, cand_dir: str) -> dict:
         meshes.append({
             "mesh": rel,
             "identical": bool(same_topology and np.array_equal(ref_pts, cand_pts)),
+            "within_tolerance": bool(same_topology and max_dist is not None and max_dist <= tol_mm),
             "same_topology": same_topology,
             "max_point_distance": max_dist,
         })
+    same_set = not only_ref and not only_cand
+    distances = [m["max_point_distance"] for m in meshes if m["max_point_distance"] is not None]
     return {
-        "identical": not only_ref and not only_cand and all(m["identical"] for m in meshes),
+        "identical": same_set and all(m["identical"] for m in meshes),
+        "within_tolerance": same_set and all(m["within_tolerance"] for m in meshes),
+        "tolerance_mm": tol_mm,
+        "max_point_distance": max(distances) if distances else None,
         "only_in_reference": only_ref,
         "only_in_candidate": only_cand,
         "meshes": meshes,
@@ -175,14 +193,22 @@ def compare_meshes(ref_dir: str, cand_dir: str) -> dict:
 # Report
 # ---------------------------------------------------------------------------
 
-def compare(ref_dir: str, cand_dir: str) -> dict:
+def compare(ref_dir: str, cand_dir: str, mesh_tol_mm: float = 0.0) -> dict:
     seg = compare_seg4d(ref_dir, cand_dir)
     image = compare_image4d(ref_dir, cand_dir)
-    meshes = compare_meshes(ref_dir, cand_dir)
+    meshes = compare_meshes(ref_dir, cand_dir, mesh_tol_mm)
+    exact_volumes = bool(seg["identical"] and image["identical"] is not False)
+    if exact_volumes and meshes["identical"]:
+        verdict = "IDENTICAL"
+    elif exact_volumes and meshes["within_tolerance"]:
+        verdict = "EQUIVALENT"
+    else:
+        verdict = "DIFFERENT"
     return {
         "reference": os.path.abspath(ref_dir),
         "candidate": os.path.abspath(cand_dir),
-        "identical": bool(seg["identical"] and image["identical"] is not False and meshes["identical"]),
+        "verdict": verdict,
+        "identical": verdict == "IDENTICAL",
         "seg_4d": seg,
         "image_4d": image,
         "meshes": meshes,
@@ -198,26 +224,31 @@ def _print_report(report: dict) -> None:
         print(f"{f['frame']:>9} {'yes' if f['identical'] else 'NO':>5} {f['voxels_changed']:>9} "
               f"{f['dice_fg']:>9.4f} {f['volume_ratio_fg']:>10.4f}")
     differing = [m for m in meshes["meshes"] if not m["identical"]]
-    print(f"meshes: {len(meshes['meshes'])} compared, {len(differing)} differ, "
+    print(f"meshes: {len(meshes['meshes'])} compared, {len(differing)} not bit-identical "
+          f"(largest vertex distance {meshes['max_point_distance']} mm, tolerance "
+          f"{meshes['tolerance_mm']} mm), "
           f"{len(meshes['only_in_reference'])} only in reference, "
           f"{len(meshes['only_in_candidate'])} only in candidate")
     for m in differing[:10]:
         print(f"  {m['mesh']}: topology {'same' if m['same_topology'] else 'DIFFERENT'}, "
               f"max point distance {m['max_point_distance']}")
     print(f"image-4d identical: {report['image_4d']['identical']}")
-    print("RESULT:", "IDENTICAL" if report["identical"] else "DIFFERENT")
+    print("RESULT:", report["verdict"])
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("reference_dir")
     parser.add_argument("candidate_dir")
+    parser.add_argument("--mesh-tol-mm", type=float, default=0.0,
+                        help="largest vertex distance (mm) still counted as equivalent; "
+                             "set it from a measured same-code rerun (default 0: exact)")
     parser.add_argument("--json", help="also write the full report here")
     parser.add_argument("--quiet", action="store_true", help="print only the result line")
     args = parser.parse_args(argv)
 
     try:
-        report = compare(args.reference_dir, args.candidate_dir)
+        report = compare(args.reference_dir, args.candidate_dir, args.mesh_tol_mm)
     except NotComparable as exc:
         print(f"NOT COMPARABLE: {exc}", file=sys.stderr)
         return 2
@@ -226,10 +257,10 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.json, "w") as f:
             json.dump(report, f, indent=2)
     if args.quiet:
-        print("RESULT:", "IDENTICAL" if report["identical"] else "DIFFERENT")
+        print("RESULT:", report["verdict"])
     else:
         _print_report(report)
-    return 0 if report["identical"] else 1
+    return 0 if report["verdict"] in ("IDENTICAL", "EQUIVALENT") else 1
 
 
 if __name__ == "__main__":
