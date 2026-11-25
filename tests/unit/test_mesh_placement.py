@@ -121,9 +121,35 @@ class TestFactoryBuild:
         with pytest.raises(ValueError, match="RAS"):
             self._factory(img, ras, tmp_path).build()
 
-    def test_build_rejects_an_empty_mesh(self, tmp_path):
-        with pytest.raises(ValueError, match="has no vertices"):
+    def test_build_warns_on_an_empty_in_memory_mesh_and_carries_on(self, tmp_path, caplog):
+        # avrp-handler meshes labels in memory; a tiny label can mesh to nothing, and
+        # earlier versions let that through. It must not fail the study.
+        with caplog.at_level(logging.WARNING):
             self._factory(_image(), vtk.vtkPolyData(), tmp_path).build()
+        assert "has no vertices" in caplog.text
+
+    def test_unreadable_mesh_file_is_rejected(self, tmp_path):
+        img = _image()
+        seg_arr = np.zeros((40, 40, 40), dtype=np.int16)
+        seg_arr[15:25, 15:25, 15:25] = 1
+        seg = sitk.GetImageFromArray(seg_arr)
+        seg.CopyInformation(img)
+        seg_path, img_path = str(tmp_path / "seg.nii.gz"), str(tmp_path / "img.nii.gz")
+        sitk.WriteImage(seg, seg_path)
+        sitk.WriteImage(sitk.JoinSeries([img, img]), img_path)
+        grid = vtk.vtkUnstructuredGrid()  # a legacy .vtk that is not PolyData
+        grid.SetPoints(vtk.vtkPoints())
+        grid.GetPoints().InsertNextPoint(-60.0, 20.0, 25.0)
+        writer = vtk.vtkUnstructuredGridWriter()
+        mesh_path = str(tmp_path / "surface.vtk")
+        writer.SetFileName(mesh_path)
+        writer.SetInputData(grid)
+        writer.Write()
+
+        factory = PropagationInputFactory().set_image_4d_from_disk(img_path)
+        with pytest.raises(ValueError, match="has no vertices"):
+            factory.add_tp_input_group_from_disk(tp_ref=1, tp_target=[2], seg_ref_path=seg_path,
+                                                 additional_meshes_ref={"root": mesh_path})
 
 
 class TestGreedyInverseChain:
