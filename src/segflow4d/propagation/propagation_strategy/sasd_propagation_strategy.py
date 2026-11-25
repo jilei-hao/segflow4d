@@ -95,6 +95,7 @@ class SASDPropagationStrategy(AbstractPropagationStrategy):
                 init_affine_matrix=composed_affines[target_tp],
                 mask_fixed=tp_input_data[target_tp].mask,
                 mask_moving=tp_input_data[ref_tp].mask,
+                additional_meshes_to_reslice=tp_input_data[ref_tp].additional_meshes,
             )
             futures[target_tp] = future
 
@@ -106,6 +107,7 @@ class SASDPropagationStrategy(AbstractPropagationStrategy):
             tp_input_data[target_tp].resliced_image = result.resliced_image
             tp_input_data[target_tp].resliced_segmentation_mesh = result.resliced_segmentation_mesh
             tp_input_data[target_tp].segmentation_mesh = result.resliced_segmentation_mesh
+            tp_input_data[target_tp].resliced_meshes = result.resliced_meshes
             tp_input_data[target_tp].warp_image = result.warp_image
 
         logger.info("SASD propagation completed")

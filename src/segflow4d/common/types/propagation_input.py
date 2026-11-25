@@ -8,6 +8,7 @@ from segflow4d.common.types.propagation_options import PropagationOptions
 from SimpleITK import Image, ReadImage
 from vtkmodules.vtkCommonDataModel import vtkPolyData
 from segflow4d.utility.mesh_helper.mesh_helper import read_polydata
+from segflow4d.utility.mesh_helper.mesh_placement import check_mesh_placement
 from logging import getLogger
 
 logger = getLogger(__name__)
@@ -80,6 +81,8 @@ class PropagationInputFactory:
                     minimum_required_vram_gb: int = 10,
                     propagation_strategy_combo: str = "sequential_star",
                     roi_crop_padding_voxels: int = 0,
+                    cyclic_time: bool = False,
+                    mask_high_res_registration: bool = True,
                     **kwargs) -> 'PropagationInputFactory':
         '''
         Sets the propagation options. *kwargs are reserved for configuring different registration backends.
@@ -97,6 +100,8 @@ class PropagationInputFactory:
             registration_backend_options=kwargs,
             propagation_strategy_combo=propagation_strategy_combo,
             roi_crop_padding_voxels=roi_crop_padding_voxels,
+            cyclic_time=cyclic_time,
+            mask_high_res_registration=mask_high_res_registration,
         )
 
         os.makedirs(output_directory, exist_ok=True)
@@ -106,6 +111,17 @@ class PropagationInputFactory:
     
 
     def build(self) -> PropagationInput:
+        # A mesh outside the image would be copied unchanged to every timepoint,
+        # silently; most often it is a RAS mesh. Fail here instead (see mesh_placement).
+        for group in getattr(self, '_tp_input_groups', []):
+            for name, mesh in (group.additional_meshes_ref or {}).items():
+                if mesh.get_data().GetNumberOfPoints() == 0:
+                    raise ValueError(
+                        f"Additional mesh {name!r} has no vertices. If it was read from "
+                        f"a file, check that the file holds VTK PolyData (a legacy .vtk "
+                        f"file can also hold an unstructured grid, which reads as empty)."
+                    )
+                check_mesh_placement(name, mesh.get_vertices(), group.seg_ref.get_data())
         return PropagationInput(
             image_4d=self._image_4d,
             tp_input_groups=self._tp_input_groups,

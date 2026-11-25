@@ -25,7 +25,7 @@ from segflow4d.common.types.propagation_options import PropagationOptions
 from segflow4d.common.types.tp_data import TPData
 from segflow4d.registration.registration_handler.abstract_registration_handler import AbstractRegistrationHandler
 from segflow4d.registration.registration_handler.greedy.greedy_registration_options import GreedyRegistrationOptions
-from segflow4d.registration.registration_handler.greedy.cpu_mesh_warper import warp_mesh_vertices_cpu
+from segflow4d.registration.registration_handler.greedy.greedy_mesh_warp import warp_meshes_with_greedy
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,27 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         if opts.verbosity > 0:
             parts.append(f"-V {opts.verbosity}")
         return " ".join(parts)
+
+    @staticmethod
+    def _warp_meshes(g, mesh_to_reslice, additional_meshes_to_reslice, itk_moving,
+                     reslice_chain: list[str], common_flags: str):
+        """Warp the segmentation mesh and any additional meshes into fixed space.
+
+        Returns ``(resliced_mesh | None, {name: resliced_additional_mesh})``.
+        """
+        meshes: dict[str, MeshWrapper] = {}
+        if mesh_to_reslice is not None:
+            meshes["\0segmentation-mesh"] = mesh_to_reslice  # key cannot clash with a user name
+        meshes.update(additional_meshes_to_reslice or {})
+        if not meshes:
+            return None, dict[str, MeshWrapper]()
+
+        logger.info(f"Warping {len(meshes)} mesh(es) with greedy's inverse chain ...")
+        t0 = time()
+        warped = warp_meshes_with_greedy(g, meshes, itk_moving, reslice_chain, common_flags)
+        logger.info(f"Mesh warping completed in {time() - t0:.2f}s")
+        resliced_mesh = warped.pop("\0segmentation-mesh", None)
+        return resliced_mesh, warped
 
     # ------------------------------------------------------------------
     # AbstractRegistrationHandler stubs (individual stages not needed
@@ -230,6 +251,9 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             logger.info("Starting greedy deformable registration (deformable_and_reslice) ...")
             t1 = time()
 
+            # Meshes are pushed with the inverse chain (see greedy_mesh_warp), which
+            # needs the inverse warp; only pay for it when there is a mesh to warp.
+            warp_meshes = mesh_to_reslice is not None or bool(additional_meshes_to_reslice)
             deform_cmd = (
                 f"-i my_fixed my_moving "
                 f"{f'-it {affine_file} ' if has_init_affine else ''}"
@@ -238,10 +262,13 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
                 f"-s {opts.smooth_sigma_pre_mm}mm {opts.smooth_sigma_post_mm}mm "
                 f"{'-gm my_mask_fixed ' if itk_mask_fixed is not None else ''}"
                 f"-o my_warp "
+                f"{'-oinv my_warp_inv ' if warp_meshes else ''}"
                 f"{common_flags}"
             ).strip()
 
             deform_kwargs = dict(my_fixed=itk_fixed, my_moving=itk_moving, my_warp=None)
+            if warp_meshes:
+                deform_kwargs["my_warp_inv"] = None
             if itk_mask_fixed is not None:
                 deform_kwargs["my_mask_fixed"] = itk_mask_fixed
             g.execute(deform_cmd, **deform_kwargs)
@@ -262,7 +289,8 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             fd_out, reslice_out_tmp = tempfile.mkstemp(suffix=".nii.gz")
             os.close(fd_out)
             try:
-                reslice_transforms = f"my_warp {affine_file}" if has_init_affine else "my_warp"
+                reslice_chain = ["my_warp", affine_file] if has_init_affine else ["my_warp"]
+                reslice_transforms = " ".join(reslice_chain)
                 reslice_cmd = (
                     f"-rf my_fixed "
                     f"-ri LABEL {opts.label_interpolation} "
@@ -281,28 +309,13 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             logger.info(f"Segmentation reslicing completed in {time() - t2:.2f}s")
 
             # ----------------------------------------------------------------
-            # Warp mesh (optional)
+            # Warp meshes (optional): the inverse of the segmentation's chain.
+            # Runs before the finally below deletes affine_file.
             # ----------------------------------------------------------------
-            resliced_mesh: MeshWrapper | None = None
-            if mesh_to_reslice is not None:
-                logger.info("Warping mesh vertices on CPU ...")
-                t3 = time()
-                resliced_mesh = warp_mesh_vertices_cpu(
-                    mesh_wrapper=mesh_to_reslice,
-                    warp_field_sitk=warp_field_sitk,
-                    img_fixed_sitk=itk_fixed,
-                )
-                logger.info(f"Mesh warping completed in {time() - t3:.2f}s")
-
-            resliced_additional_meshes = dict[str, MeshWrapper]()
-            if additional_meshes_to_reslice:
-                logger.info(f"Warping {len(additional_meshes_to_reslice)} additional mesh(es) on CPU ...")
-                for mesh_name, mesh in additional_meshes_to_reslice.items():
-                    resliced_additional_meshes[mesh_name] = warp_mesh_vertices_cpu(
-                        mesh_wrapper=mesh,
-                        warp_field_sitk=warp_field_sitk,
-                        img_fixed_sitk=itk_fixed,
-                    )
+            resliced_mesh, resliced_additional_meshes = self._warp_meshes(
+                g, mesh_to_reslice, additional_meshes_to_reslice, itk_moving,
+                reslice_chain, common_flags,
+            )
 
             return TPData(
                 resliced_image=resliced_image,
@@ -338,7 +351,8 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         1. Affine registration  (``-a -dof {dof}``)
         2. Deformable registration  (greedy SyN, initialized with affine)
         3. Reslice segmentation label map  (``-ri LABEL``)
-        4. Warp mesh vertices  (optional, via :func:`warp_mesh_vertices_cpu`)
+        4. Warp mesh vertices  (optional, via :func:`warp_meshes_with_greedy`, with the
+           inverse of the stage-3 chain)
 
         Parameters
         ----------
@@ -419,6 +433,10 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         logger.info("Starting greedy deformable registration ...")
         t1 = time()
 
+        # Meshes are pushed with the inverse chain (see greedy_mesh_warp), which
+        # needs the inverse warp; only pay for it when there is a mesh to warp.
+        warp_meshes = mesh_to_reslice is not None or bool(additional_meshes_to_reslice)
+
         deform_cmd = (
             f"-i my_fixed my_moving "
             f"-it my_affine "
@@ -427,11 +445,14 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             f"-s {opts.smooth_sigma_pre_mm}mm {opts.smooth_sigma_post_mm}mm "
             f"{'-gm my_mask_fixed ' if itk_mask_fixed is not None else ''}"
             f"-o my_warp "
+            f"{'-oinv my_warp_inv ' if warp_meshes else ''}"
             f"{common_flags}"
         ).strip()
 
         logger.debug(f"Greedy deformable command: {deform_cmd}")
         deform_kwargs = dict(my_fixed=itk_fixed, my_moving=itk_moving, my_warp=None)
+        if warp_meshes:
+            deform_kwargs['my_warp_inv'] = None
         if itk_mask_fixed is not None:
             deform_kwargs['my_mask_fixed'] = itk_mask_fixed
         g.execute(deform_cmd, **deform_kwargs)
@@ -474,28 +495,12 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
         logger.info(f"Segmentation reslicing completed in {time() - t2:.2f}s")
 
         # ----------------------------------------------------------------
-        # Stage 4: Warp mesh (optional)
+        # Stage 4: Warp meshes (optional): the inverse of the segmentation's chain
         # ----------------------------------------------------------------
-        resliced_mesh: MeshWrapper | None = None
-        if mesh_to_reslice is not None:
-            logger.info("Warping mesh vertices on CPU ...")
-            t3 = time()
-            resliced_mesh = warp_mesh_vertices_cpu(
-                mesh_wrapper=mesh_to_reslice,
-                warp_field_sitk=warp_field_sitk,
-                img_fixed_sitk=itk_fixed,
-            )
-            logger.info(f"Mesh warping completed in {time() - t3:.2f}s")
-
-        resliced_additional_meshes = dict[str, MeshWrapper]()
-        if additional_meshes_to_reslice:
-            logger.info(f"Warping {len(additional_meshes_to_reslice)} additional mesh(es) on CPU ...")
-            for mesh_name, mesh in additional_meshes_to_reslice.items():
-                resliced_additional_meshes[mesh_name] = warp_mesh_vertices_cpu(
-                    mesh_wrapper=mesh,
-                    warp_field_sitk=warp_field_sitk,
-                    img_fixed_sitk=itk_fixed,
-                )
+        resliced_mesh, resliced_additional_meshes = self._warp_meshes(
+            g, mesh_to_reslice, additional_meshes_to_reslice, itk_moving,
+            ["my_warp", "my_affine"], common_flags,
+        )
 
         return TPData(
             resliced_image=resliced_image,
