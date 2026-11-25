@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import tempfile
+from contextlib import contextmanager
 from time import time
 
 import SimpleITK as sitk
@@ -26,9 +27,34 @@ from segflow4d.common.types.propagation_options import PropagationOptions
 from segflow4d.common.types.tp_data import TPData
 from segflow4d.registration.registration_handler.abstract_registration_handler import AbstractRegistrationHandler
 from segflow4d.registration.registration_handler.ants.ants_registration_options import AntsRegistrationOptions
-from segflow4d.registration.registration_handler.greedy.cpu_mesh_warper import warp_mesh_vertices_cpu
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _ants_random_seed(ants, seed):
+    """Make ``seed`` reach ants.registration, whatever the antspyx version.
+
+    antspyx >= 0.6 has no ``random_seed`` parameter on ants.registration: the
+    keyword is swallowed by ``**kwargs`` and ignored, and the seed is read from the
+    module global ``ants.config._random_seed``. So segflow4d's ``random_seed``
+    option did nothing and runs were not reproducible (sf4d-200 KNOWN_ISSUES B15).
+    The global is set only for the duration of the call and restored afterwards.
+    The public ``ants.config.set_ants_deterministic`` is not used: it also forces
+    ITK to one thread through an environment variable and reseeds numpy, for the
+    whole process, and never undoes any of it. Older antspyx versions take the
+    keyword, which the handler still passes.
+    """
+    config = getattr(ants, "config", None)
+    if seed is None or config is None or not hasattr(config, "_random_seed"):
+        yield
+        return
+    prior = config._random_seed
+    config._random_seed = seed
+    try:
+        yield
+    finally:
+        config._random_seed = prior
 
 
 class AntsRegistrationHandler(AbstractRegistrationHandler):
@@ -122,15 +148,23 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
     def _read_affine_matrix(transform_path: str) -> np.ndarray:
         """
         Read an ITK affine transform from a .mat file and return a 4x4
-        homogeneous numpy matrix.
+        homogeneous numpy matrix, p' = M p + offset.
+
+        ITK affines carry a centre of rotation c: p' = M (p - c) + c + t, so the
+        homogeneous offset is t + c - M c, NOT the translation t. ANTs writes
+        affines with a non-zero centre. Taking t alone shifted every SASD
+        initialiser, and composing the steps compounded the error: the ANTs
+        sequential_sasd segmentation reached Dice 0.26 three frames out
+        (sf4d-200 KNOWN_ISSUES B14).
         """
         tx = sitk.ReadTransform(transform_path)
         affine = sitk.AffineTransform(tx)
         matrix = np.array(affine.GetMatrix(), dtype=np.float64).reshape(3, 3)
         translation = np.array(affine.GetTranslation(), dtype=np.float64)
+        center = np.array(affine.GetCenter(), dtype=np.float64)
         out = np.eye(4, dtype=np.float64)
         out[:3, :3] = matrix
-        out[:3, 3] = translation
+        out[:3, 3] = translation + center - matrix @ center
         return out
 
     @staticmethod
@@ -182,15 +216,21 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
         that map cleanly through the antspyx convenience API; the
         ``aff_*`` schedule fields are passed through and ignored by ANTs
         when the chosen transform_type doesn't have an affine stage.
+
+        The schedules must be TUPLES: antspyx honours ``aff_shrink_factors`` /
+        ``aff_smoothing_sigmas`` / ``aff_iterations`` only when they are tuples
+        (or ints). A list is silently replaced by its fixed 4-level defaults,
+        so a custom affine schedule was dropped, and a non-4-level one made
+        ANTs exit with an error (sf4d-200 KNOWN_ISSUES B12).
         """
         kwargs = dict(
             type_of_transform=opts.transform_type,
             aff_metric=opts.metric if opts.metric in ('mattes', 'meansquares', 'GC') else 'mattes',
             syn_metric=opts.metric if opts.metric in ('CC', 'mattes', 'meansquares', 'demons') else 'mattes',
-            aff_iterations=list(opts.aff_iterations),
-            reg_iterations=list(opts.reg_iterations),
-            aff_shrink_factors=list(opts.aff_shrink_factors),
-            aff_smoothing_sigmas=list(opts.aff_smoothing_sigmas),
+            aff_iterations=tuple(opts.aff_iterations),
+            reg_iterations=tuple(opts.reg_iterations),
+            aff_shrink_factors=tuple(opts.aff_shrink_factors),
+            aff_smoothing_sigmas=tuple(opts.aff_smoothing_sigmas),
             grad_step=opts.grad_step,
             flow_sigma=opts.flow_sigma,
             total_sigma=opts.total_sigma,
@@ -257,19 +297,20 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
 
             logger.info("Starting ants affine-only registration ...")
             t0 = time()
-            reg = ants.registration(
-                fixed=fixed_ants,
-                moving=moving_ants,
-                type_of_transform='Affine',
-                mask=mask_ants,
-                aff_iterations=list(opts.aff_iterations),
-                aff_shrink_factors=list(opts.aff_shrink_factors),
-                aff_smoothing_sigmas=list(opts.aff_smoothing_sigmas),
-                aff_metric=opts.metric if opts.metric in ('mattes', 'meansquares', 'GC') else 'mattes',
-                verbose=opts.verbose,
-                outprefix=os.path.join(workdir, 'aff_'),
-                **({'random_seed': opts.random_seed} if opts.random_seed is not None else {}),
-            )
+            with _ants_random_seed(ants, opts.random_seed):
+                reg = ants.registration(
+                    fixed=fixed_ants,
+                    moving=moving_ants,
+                    type_of_transform='Affine',
+                    mask=mask_ants,
+                    aff_iterations=tuple(opts.aff_iterations),
+                    aff_shrink_factors=tuple(opts.aff_shrink_factors),
+                    aff_smoothing_sigmas=tuple(opts.aff_smoothing_sigmas),
+                    aff_metric=opts.metric if opts.metric in ('mattes', 'meansquares', 'GC') else 'mattes',
+                    verbose=opts.verbose,
+                    outprefix=os.path.join(workdir, 'aff_'),
+                    **({'random_seed': opts.random_seed} if opts.random_seed is not None else {}),
+                )
 
             affine_path = self._extract_affine_path(reg['fwdtransforms'])
             if affine_path is None:
@@ -296,11 +337,12 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
         init_affine_matrix=None,
         mask_fixed: ImageWrapper | None = None,
         mask_moving: ImageWrapper | None = None,
+        additional_meshes_to_reslice: dict | None = None,
     ) -> TPData:
         """
         Run deformable registration (optionally initialised from a 4x4
         numpy affine matrix) and reslice the supplied segmentation /
-        mesh.
+        meshes.
         """
         ants = self._import_ants()
         opts = self._resolve_options(options)
@@ -339,11 +381,12 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
                 reg_kwargs['initial_transform'] = init_affine_file
             reg_kwargs['outprefix'] = os.path.join(workdir, 'def_')
 
-            reg = ants.registration(
-                fixed=fixed_ants,
-                moving=moving_ants,
-                **reg_kwargs,
-            )
+            with _ants_random_seed(ants, opts.random_seed):
+                reg = ants.registration(
+                    fixed=fixed_ants,
+                    moving=moving_ants,
+                    **reg_kwargs,
+                )
             logger.info(f"Ants deformable registration completed in {time() - t0:.2f}s")
 
             return self._reslice_and_package(
@@ -354,6 +397,7 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
                 img_fixed=img_fixed,
                 img_to_reslice=img_to_reslice,
                 mesh_to_reslice=mesh_to_reslice,
+                additional_meshes_to_reslice=additional_meshes_to_reslice,
                 read_affine=False,
             )
         finally:
@@ -373,6 +417,7 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
         options: PropagationOptions,
         mask_fixed: ImageWrapper | None = None,
         mask_moving: ImageWrapper | None = None,
+        additional_meshes_to_reslice: dict | None = None,
     ) -> TPData:
         """
         Full registration (per ``opts.transform_type``) followed by
@@ -407,11 +452,12 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
                 reg_kwargs['mask'] = mask_ants
             reg_kwargs['outprefix'] = os.path.join(workdir, 'reg_')
 
-            reg = ants.registration(
-                fixed=fixed_ants,
-                moving=moving_ants,
-                **reg_kwargs,
-            )
+            with _ants_random_seed(ants, opts.random_seed):
+                reg = ants.registration(
+                    fixed=fixed_ants,
+                    moving=moving_ants,
+                    **reg_kwargs,
+                )
             logger.info(f"Ants registration completed in {time() - t0:.2f}s")
 
             return self._reslice_and_package(
@@ -422,6 +468,7 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
                 img_fixed=img_fixed,
                 img_to_reslice=img_to_reslice,
                 mesh_to_reslice=mesh_to_reslice,
+                additional_meshes_to_reslice=additional_meshes_to_reslice,
                 read_affine=True,
             )
         finally:
@@ -442,6 +489,7 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
         img_to_reslice: ImageWrapper,
         mesh_to_reslice: MeshWrapper | None,
         read_affine: bool,
+        additional_meshes_to_reslice: dict | None = None,
     ) -> TPData:
         # ----------------------------------------------------------------
         # Reslice segmentation label map via ants.apply_transforms
@@ -475,25 +523,21 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
             warp_field_sitk = sitk.ReadImage(warp_path)
 
         # ----------------------------------------------------------------
-        # Optional mesh warping (CPU SITK displacement transform)
+        # Optional mesh warping: the inverse of the segmentation's chain
         # ----------------------------------------------------------------
-        resliced_mesh: MeshWrapper | None = None
+        meshes: dict[str, MeshWrapper] = {}
         if mesh_to_reslice is not None:
-            if warp_field_sitk is None:
-                logger.warning(
-                    "Mesh provided but no deformable warp produced "
-                    "(transform_type=%s); mesh will not be warped.",
-                    opts.transform_type,
-                )
-            else:
-                logger.info("Warping mesh vertices on CPU ...")
-                t1 = time()
-                resliced_mesh = warp_mesh_vertices_cpu(
-                    mesh_wrapper=mesh_to_reslice,
-                    warp_field_sitk=warp_field_sitk,
-                    img_fixed_sitk=img_fixed.get_data(),
-                )
-                logger.info(f"Mesh warping completed in {time() - t1:.2f}s")
+            meshes["\0segmentation-mesh"] = mesh_to_reslice  # key cannot clash with a user name
+        meshes.update(additional_meshes_to_reslice or {})
+        resliced_mesh: MeshWrapper | None = None
+        resliced_additional_meshes = dict[str, MeshWrapper]()
+        if meshes:
+            logger.info(f"Warping {len(meshes)} mesh(es) with the inverse transform chain ...")
+            t1 = time()
+            warped = self._warp_meshes(ants, reg, meshes)
+            resliced_mesh = warped.pop("\0segmentation-mesh", None)
+            resliced_additional_meshes = warped
+            logger.info(f"Mesh warping completed in {time() - t1:.2f}s")
 
         # ----------------------------------------------------------------
         # Extract affine matrix when requested and present
@@ -507,9 +551,37 @@ class AntsRegistrationHandler(AbstractRegistrationHandler):
         return TPData(
             resliced_image=resliced_image,
             resliced_segmentation_mesh=resliced_mesh,
+            resliced_meshes=resliced_additional_meshes,
             warp_image=ImageWrapper(warp_field_sitk) if warp_field_sitk is not None else None,
             affine_matrix=affine_matrix,
         )
+
+    @staticmethod
+    def _warp_meshes(ants, reg, meshes: dict[str, MeshWrapper]) -> dict[str, MeshWrapper]:
+        """Push meshes from moving (reference) space into fixed (target) space.
+
+        ANTs maps POINTS in the same direction as an image's sampling grid:
+        ``fwdtransforms`` takes fixed-space points into moving space, which is
+        what reslicing the segmentation needs. A mesh lives in moving space and
+        has to go the other way. ``invtransforms`` is exactly the inverse of the
+        forward chain: the same affine(s), to be inverted, and the inverse warp.
+        Each ``.mat`` is flagged in ``whichtoinvert``.
+
+        Before this, the handler applied the forward warp alone to the mesh, which
+        dropped the affine and pointed the residual the wrong way. That is the same
+        bug the greedy handler had (sf4d-200 KNOWN_ISSUES B11/B12). ANTs points are
+        ITK/LPS physical coordinates, the same frame as segflow4d meshes.
+        """
+        import pandas as pd
+
+        transforms = list(reg['invtransforms'])
+        invert = [t.endswith('.mat') for t in transforms]
+        warped: dict[str, MeshWrapper] = {}
+        for name, mesh in meshes.items():
+            points = pd.DataFrame(mesh.get_vertices().astype(np.float64), columns=['x', 'y', 'z'])
+            moved = ants.apply_transforms_to_points(3, points, transforms, whichtoinvert=invert)
+            warped[name] = mesh.deepcopy().update_vertices(moved[['x', 'y', 'z']].to_numpy())
+        return warped
 
     def get_device_type(self) -> str:
         return "cpu"

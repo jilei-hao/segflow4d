@@ -45,6 +45,21 @@ def _make_sitk_sphere(shape=(16, 16, 16), radius=4, dtype=np.float32):
     return img
 
 
+def _make_textured_sphere(shape=(16, 16, 16), radius=4):
+    """A sphere with radial texture plus a gentle gradient across x.
+
+    A flat binary sphere is ill-posed for mutual-information SyN: even plain antspyx
+    distorts an identity registration of one (Dice 0.86). The texture gives the
+    metric something to lock onto, and identity then comes back exact.
+    """
+    zz, yy, xx = np.mgrid[0:shape[0], 0:shape[1], 0:shape[2]]
+    centre = np.array(shape) / 2
+    dist = np.sqrt((zz - centre[0]) ** 2 + (yy - centre[1]) ** 2 + (xx - centre[2]) ** 2)
+    arr = np.where(dist <= radius, 0.6 + 0.4 * np.cos(2 * np.pi * dist / radius), 0.0)
+    arr = (arr + 0.05 * np.sin(xx / 2.0)).astype(np.float32)
+    return sitk.GetImageFromArray(arr)
+
+
 def _make_seg_sphere(shape=(16, 16, 16), radius=4):
     """Return a SimpleITK int16 label image with label 1 inside a sphere."""
     arr = np.zeros(shape, dtype=np.int16)
@@ -405,10 +420,15 @@ class TestAntsHandlerRegistration:
         assert result.affine_matrix.shape == (4, 4)
 
     def test_identity_registration_preserves_labels(self, handler):
-        """Registering identical images should produce a seg close to the input."""
+        """Registering identical images should produce a seg close to the input.
+
+        The image is textured (see _make_textured_sphere). On the flat binary sphere
+        this test used before, SyN distorted the identity, giving Dice 0.47-0.86 from
+        run to run, around the old 0.75 threshold. On the textured sphere identity
+        comes back exact (Dice 1.0, measured repeatedly), so the threshold is 0.95."""
         shape = (16, 16, 16)
         seg_sitk = _make_seg_sphere(shape=shape)
-        img = ImageWrapper(_make_sitk_sphere(shape=shape))
+        img = ImageWrapper(_make_textured_sphere(shape=shape))
         seg = ImageWrapper(seg_sitk)
 
         identity_opts = _minimal_ants_opts(
@@ -432,7 +452,7 @@ class TestAntsHandlerRegistration:
         dice = 2 * np.sum((pred == 1) & (gt == 1)) / (
             np.sum(pred == 1) + np.sum(gt == 1) + 1e-6
         )
-        assert dice >= 0.75, f"Identity registration Dice {dice:.3f} < 0.75"
+        assert dice >= 0.95, f"Identity registration Dice {dice:.3f} < 0.95"
 
     def test_sitk_ants_roundtrip_preserves_metadata(self, handler):
         """The internal SITK<->ANTs converters must preserve geometry."""
@@ -459,3 +479,36 @@ class TestAntsHandlerRegistration:
             sitk.GetArrayFromImage(back),
             sitk.GetArrayFromImage(sitk_img),
         )
+
+
+# ---------------------------------------------------------------------------
+# _read_affine_matrix: the 4x4 must move points exactly as the ITK transform does
+# ---------------------------------------------------------------------------
+
+class TestReadAffineMatrix:
+    """sf4d-200 KNOWN_ISSUES B14. An ITK affine maps p -> M (p - c) + c + t. ANTs writes
+    its affines with a non-zero centre c, so the 4x4 offset is t + c - M c, not t.
+    Taking t alone shifted every SASD initialiser, and composing the steps
+    compounded the error (ANTs sequential_sasd Dice 0.26 three frames out)."""
+
+    def test_matches_the_itk_transform_when_the_centre_is_not_the_origin(self, tmp_path):
+        from segflow4d.registration.registration_handler.ants.ants_registration_handler import (
+            AntsRegistrationHandler,
+        )
+
+        angle = np.deg2rad(12.0)
+        rotation_scale = np.array([[np.cos(angle), -np.sin(angle), 0.0],
+                                   [np.sin(angle),  np.cos(angle), 0.0],
+                                   [0.0,            0.0,           1.1]])
+        tx = sitk.AffineTransform(3)
+        tx.SetMatrix(rotation_scale.flatten().tolist())
+        tx.SetTranslation((2.0, -1.0, 0.5))
+        tx.SetCenter((10.0, -20.0, 30.0))
+        path = str(tmp_path / "affine.mat")
+        sitk.WriteTransform(tx, path)
+
+        matrix = AntsRegistrationHandler._read_affine_matrix(path)
+
+        for p in [(0.0, 0.0, 0.0), (10.0, -20.0, 30.0), (-35.5, 12.25, 80.0)]:
+            np.testing.assert_allclose((matrix @ np.append(p, 1.0))[:3],
+                                       tx.TransformPoint(p), atol=1e-9)

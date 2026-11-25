@@ -39,6 +39,12 @@ class GreedyRegistrationOptions(AbstractRegistrationOptions):
         label_interpolation: Smoothing parameter for the LABEL reslice interpolation
             (``-ri LABEL <value>``).  Accepts voxel or mm units, e.g. ``"0.2vox"``
             or ``"0.5mm"``.
+        seed: Random generator seed, passed as ``-seed`` to every greedy call.
+            None (default) leaves greedy stochastic: it picks a new seed each run
+            (its own default, ``-seed 0``), so runs are not reproducible
+            (sf4d-200 KNOWN_ISSUES H1). With a seed and ``threads=1`` runs are identical.
+            With more threads they agree closely but not exactly: reductions run in
+            varying order, so a few boundary voxels can flip.
     """
 
     metric: Literal['NCC', 'SSD', 'NMI'] = 'NCC'
@@ -53,6 +59,7 @@ class GreedyRegistrationOptions(AbstractRegistrationOptions):
     verbosity: int = 0
     use_float: bool = True
     label_interpolation: str = "0.2vox"
+    seed: int | None = None
 
     def __post_init__(self):
         if self.metric not in ('NCC', 'SSD', 'NMI'):
