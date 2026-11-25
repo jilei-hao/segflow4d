@@ -165,6 +165,17 @@ class TestGreedyRegistrationOptions:
         opts = GreedyRegistrationOptions(jitter=0.0)
         assert opts.jitter == 0.0
 
+    def test_seed_default_is_none_so_greedy_stays_stochastic(self):
+        assert GreedyRegistrationOptions().seed is None
+
+    def test_seed_reaches_every_greedy_call_via_the_common_flags(self):
+        from segflow4d.registration.registration_handler.greedy.greedy_registration_handler import (
+            GreedyRegistrationHandler,
+        )
+        flags = GreedyRegistrationHandler._build_common_flags(GreedyRegistrationOptions(seed=7))
+        assert "-seed 7" in flags
+        assert "-seed" not in GreedyRegistrationHandler._build_common_flags(GreedyRegistrationOptions())
+
     def test_negative_jitter_raises(self):
         with pytest.raises(ValueError, match="jitter"):
             GreedyRegistrationOptions(jitter=-0.1)
@@ -345,6 +356,29 @@ class TestGreedyHandlerRegistration:
 
     def test_get_device_type_is_cpu(self, handler):
         assert handler.get_device_type() == "cpu"
+
+    def test_seeded_runs_are_reproducible(self, handler):
+        """sf4d-200 KNOWN_ISSUES H1. Unseeded greedy picks a new random seed every run;
+        the affine varied by up to 0.46 between two runs of the same registration.
+        With ``seed`` set and one thread, two runs must be identical."""
+        shape = (24, 24, 24)
+        img = ImageWrapper(_make_sitk_sphere(shape=shape, radius=6))
+        seg = ImageWrapper(_make_seg_sphere(shape=shape, radius=6))
+        # jitter stays at its random default (0.5). One thread: with several, the
+        # reductions run in a different order each time, and a few boundary voxels
+        # flip even with the seed set (54 of 13,824 here).
+        opts = GreedyRegistrationOptions(affine_iterations=[50, 20], deformable_iterations=[20, 10],
+                                         seed=3, threads=1)
+        runs = [
+            handler.run_registration_and_reslice(
+                img_fixed=img, img_moving=img, img_to_reslice=seg, mesh_to_reslice=None,
+                options=_minimal_prop_opts(opts),
+            )
+            for _ in range(2)
+        ]
+        np.testing.assert_array_equal(np.asarray(runs[0].affine_matrix), np.asarray(runs[1].affine_matrix))
+        np.testing.assert_array_equal(sitk.GetArrayFromImage(runs[0].resliced_image.get_data()),
+                                      sitk.GetArrayFromImage(runs[1].resliced_image.get_data()))
 
     def test_identity_registration_preserves_labels(self, handler):
         """Registering identical images should produce a seg close to the input."""

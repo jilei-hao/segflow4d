@@ -44,10 +44,12 @@ FOLLOW_RATIO = 0.5
 MESH_SEG_MAX_MM = 1.0
 
 BACKENDS = [
+    # Seeded: unseeded greedy is not reproducible (KNOWN_ISSUES H1). On this case
+    # its SASD result sometimes landed just over the follow ratio.
     pytest.param("greedy", {"metric": "SSD", "affine_dof": 6,
                             "smooth_sigma_pre_mm": 2.0, "smooth_sigma_post_mm": 0.5,
                             "affine_iterations": [100, 50],
-                            "deformable_iterations": [100, 50, 25]},
+                            "deformable_iterations": [100, 50, 25], "seed": 7},
                  marks=pytest.mark.greedy, id="greedy"),
     # FireANTs multi-scale fails on volumes this small (FFT downsample to 0 points), so
     # single scale, as the other synthetic FireANTs e2e tests do.

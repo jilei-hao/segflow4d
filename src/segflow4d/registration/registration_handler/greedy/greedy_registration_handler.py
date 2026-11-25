@@ -89,7 +89,7 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
 
     @staticmethod
     def _build_common_flags(opts: GreedyRegistrationOptions) -> str:
-        """Build CLI fragment shared across greedy calls (threads, verbosity, precision)."""
+        """Build CLI fragment shared across greedy calls (threads, verbosity, precision, seed)."""
         parts = []
         if opts.use_float:
             parts.append("-float")
@@ -97,6 +97,8 @@ class GreedyRegistrationHandler(AbstractRegistrationHandler):
             parts.append(f"-threads {opts.threads}")
         if opts.verbosity > 0:
             parts.append(f"-V {opts.verbosity}")
+        if opts.seed is not None:
+            parts.append(f"-seed {int(opts.seed)}")
         return " ".join(parts)
 
     @staticmethod
