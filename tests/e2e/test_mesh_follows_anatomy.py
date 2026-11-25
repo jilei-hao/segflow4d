@@ -1,10 +1,13 @@
-"""Warped meshes must follow the anatomy, for every backend (sf4d-200 KNOWN_ISSUES B7, B11).
+"""Warped meshes must follow the anatomy, for every backend and both high-res strategies
+(sf4d-200 KNOWN_ISSUES B7, B11, B12).
 
 The earlier additional-mesh e2e tests only checked that the output files exist and
 have the right vertex count. That let a greedy bug through. The greedy handler
 warped meshes with the forward deformable field alone, which dropped the affine and
 pushed the small residual the wrong way, so meshes barely moved while the
-segmentation tracked the motion correctly.
+segmentation tracked the motion correctly. The ANTs handler had the same bug,
+and it also could not run in the pipeline at all: it did not accept the
+additional_meshes_to_reslice keyword that the strategies pass.
 
 Here a textured ellipsoid moves and stretches between timepoints, and the image has a
 non-zero origin, with an identity or a flipped direction. The reference TP's surface,
@@ -51,7 +54,21 @@ BACKENDS = [
     pytest.param("fireants", {"scales": [1], "affine_iterations": [200],
                               "deformable_iterations": [200], "loss_type": "mse"},
                  marks=pytest.mark.gpu, id="fireants"),
+    # A 2-level affine schedule, given as lists the way YAML delivers it. antspyx
+    # ignored list schedules until the handler passed them on as tuples. Seeded:
+    # unseeded ANTs affine sampling now and then yields a bad SASD step affine,
+    # which SASD compounds (KNOWN_ISSUES B14). That is a robustness question; this
+    # test is about the transform chain. The seed reaches ANTs only since the B15
+    # fix. Multithreaded reductions still leave runs slightly non-identical.
+    pytest.param("ants", {"aff_iterations": [100, 50], "aff_shrink_factors": [2, 1],
+                          "aff_smoothing_sigmas": [1, 0], "reg_iterations": [40, 20],
+                          "random_seed": 7},
+                 marks=pytest.mark.ants, id="ants"),
 ]
+# Star registers each target to the reference directly. SASD initialises each
+# deformable registration with a chained affine, which takes a different chain
+# through every backend's reslice and mesh code.
+COMBOS = ["sequential_star", "sequential_sasd"]
 DIRECTIONS = [
     pytest.param(np.eye(3), id="identity-direction"),
     pytest.param(np.diag([1.0, -1.0, 1.0]), id="flipped-y-direction"),
@@ -121,10 +138,13 @@ def _mesh_to_seg_mm(pts, seg_frame):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("direction", DIRECTIONS)
+@pytest.mark.parametrize("combo", COMBOS)
 @pytest.mark.parametrize("backend,backend_options", BACKENDS)
-def test_additional_mesh_follows_the_anatomy(tmp_path, backend, backend_options, direction):
+def test_additional_mesh_follows_the_anatomy(tmp_path, backend, backend_options, combo, direction):
     if backend == "greedy":
         pytest.importorskip("picsl_greedy", reason="picsl-greedy not installed")
+    if backend == "ants":
+        pytest.importorskip("ants", reason="antspyx not installed")
 
     frames = [_image(_ellipsoid(*_truth(t, direction), direction)[0], direction) for t in range(N_TP)]
     seg_ref = _image(_ellipsoid(*_truth(0, direction), direction)[1].astype(np.int16), direction)
@@ -139,7 +159,7 @@ def test_additional_mesh_follows_the_anatomy(tmp_path, backend, backend_options,
     factory.set_options(lowres_factor=0.5, registration_backend=backend, dilation_radius=4,
                         write_result_to_disk=True, output_directory=out_dir, debug=False,
                         debug_output_directory="", minimum_required_vram_gb=0,
-                        propagation_strategy_combo="sequential_star", roi_crop_padding_voxels=0,
+                        propagation_strategy_combo=combo, roi_crop_padding_voxels=0,
                         **backend_options)
     PropagationPipeline(factory.build()).run()
 
