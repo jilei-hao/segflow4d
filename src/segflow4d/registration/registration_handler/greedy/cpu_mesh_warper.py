@@ -1,8 +1,14 @@
 """
 CPU-based mesh warping using SimpleITK displacement field transforms.
 
-This module provides mesh warping for CPU-based registration backends (e.g. Greedy).
+This module provides mesh warping for CPU-based registration backends.
 It mirrors the interface of gpu_mesh_warper.py but runs entirely on CPU using ITK.
+
+Caveat: this applies the displacement field FORWARD to each vertex, so it is only
+correct for a field that maps moving-space points to fixed space. A registration's
+image-reslice warp goes the other way (fixed to moving), and it usually excludes the
+affine. The greedy handler no longer uses this function (see greedy_mesh_warp.py).
+The ANTs handler still does, with its forward warp (sf4d-200 KNOWN_ISSUES B12).
 """
 
 import logging
