@@ -7,6 +7,7 @@ the correct low-res and high-res propagation strategies for every
 Combos:
   sequential_star  →  LR = Sequential,  HR = Star
   sasd_star        →  LR = SASD,         HR = Star
+  sequential_sasd  →  LR = Sequential,  HR = SASD   (sf4d-200 KNOWN_ISSUES B1)
 
 Backends: fireants (GPU-backed), greedy (CPU-backed)
 
@@ -107,10 +108,15 @@ def _make_mock_strategy():
 
 BACKENDS = ["fireants", "greedy"]
 
-COMBO_EXPECTED_LR = [
-    ("sequential_star", PropagationStrategyName.SEQUENTIAL),
-    ("sasd_star",       PropagationStrategyName.SASD),
+# (combo, expected low-res strategy, expected high-res strategy)
+COMBO_EXPECTED = [
+    ("sequential_star", PropagationStrategyName.SEQUENTIAL, PropagationStrategyName.STAR),
+    ("sasd_star",       PropagationStrategyName.SASD,       PropagationStrategyName.STAR),
+    # High-res SASD: the deformable star gets a phase-chained affine initialiser
+    # instead of one unaided ref->target jump (bavcta025 mean Dice 0.462 -> 0.708).
+    ("sequential_sasd", PropagationStrategyName.SEQUENTIAL, PropagationStrategyName.SASD),
 ]
+COMBOS = [combo for combo, _, _ in COMBO_EXPECTED]
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +127,9 @@ class TestStrategyComboSelection:
     """_run_unidirectional_propagation must select strategies matching the combo."""
 
     @pytest.mark.parametrize("backend", BACKENDS)
-    @pytest.mark.parametrize("combo,expected_lr", COMBO_EXPECTED_LR)
-    def test_lr_strategy_matches_combo(self, backend, combo, expected_lr):
-        """Low-res strategy name must match the combo; high-res must be STAR."""
+    @pytest.mark.parametrize("combo,expected_lr,expected_hr", COMBO_EXPECTED)
+    def test_strategies_match_combo(self, backend, combo, expected_lr, expected_hr):
+        """Both the low-res and the high-res strategy names must match the combo."""
         options = _make_options(backend, combo)
         mock_input = _make_mock_propagation_input(options)
         mock_ref_input = _make_mock_ref_input()
@@ -162,14 +168,14 @@ class TestStrategyComboSelection:
             f"combo={combo!r}, backend={backend!r}: "
             f"expected LR strategy {expected_lr!r}, got {requested_names[0]!r}"
         )
-        assert requested_names[1] == PropagationStrategyName.STAR, (
+        assert requested_names[1] == expected_hr, (
             f"combo={combo!r}, backend={backend!r}: "
-            f"expected HR strategy {PropagationStrategyName.STAR!r}, got {requested_names[1]!r}"
+            f"expected HR strategy {expected_hr!r}, got {requested_names[1]!r}"
         )
 
     @pytest.mark.parametrize("backend", BACKENDS)
-    @pytest.mark.parametrize("combo,_", COMBO_EXPECTED_LR)
-    def test_both_strategies_propagate_called_once(self, backend, combo, _):
+    @pytest.mark.parametrize("combo", COMBOS)
+    def test_both_strategies_propagate_called_once(self, backend, combo):
         """Both the LR and HR strategy.propagate() methods are called exactly once."""
         options = _make_options(backend, combo)
         mock_input = _make_mock_propagation_input(options)
@@ -208,8 +214,8 @@ class TestStrategyComboSelection:
             s.propagate.assert_called_once(), f"Strategy {i} propagate() not called once"
 
     @pytest.mark.parametrize("backend", BACKENDS)
-    @pytest.mark.parametrize("combo,expected_lr", COMBO_EXPECTED_LR)
-    def test_result_contains_all_timepoints(self, backend, combo, expected_lr):
+    @pytest.mark.parametrize("combo", COMBOS)
+    def test_result_contains_all_timepoints(self, backend, combo):
         """The returned dict must contain entries for every TP in tp_list."""
         options = _make_options(backend, combo)
         mock_input = _make_mock_propagation_input(options)
@@ -239,6 +245,76 @@ class TestStrategyComboSelection:
         assert set(result.keys()) == set(tp_list), (
             f"Result keys {set(result.keys())} do not match tp_list {set(tp_list)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: mask_high_res_registration decides whether the HR stage sees masks
+# ---------------------------------------------------------------------------
+
+class TestHighResMaskOption:
+    """sf4d-200 KNOWN_ISSUES B6. FireANTs applies a mask as a hard multiply with
+    different masks on fixed and moving, so MSE ends up aligning mask silhouettes.
+    The option keeps the masks out of the high-res registration while they still
+    drive the ROI-crop box."""
+
+    def _hr_stage_masks(self, mask_high_res_registration: bool) -> dict[int, object]:
+        """The mask each TP carried into the high-res stage, captured at call time
+        (the pipeline releases the stage's input dict once the stage returns)."""
+        options = _make_options("fireants", "sequential_star")
+        options.mask_high_res_registration = mask_high_res_registration
+        tp_list = [0, 1, 2]
+        tp_data = _make_tp_data(tp_list, ref_tp=0)
+        seen_masks: list[dict[int, object]] = []
+
+        def fake_create_strategy(name: str):
+            strategy = _make_mock_strategy()
+            inner = strategy.propagate.side_effect
+
+            def recording_propagate(tp_input_data, opts):
+                seen_masks.append({tp: d.mask for tp, d in tp_input_data.items()})
+                return inner(tp_input_data, opts)
+
+            strategy.propagate.side_effect = recording_propagate
+            return strategy
+
+        with patch(
+            "segflow4d.propagation.propagation_pipeline.RegistrationManager"
+        ) as MockRM, patch.object(
+            PropagationStrategyFactory,
+            "create_propagation_strategy",
+            side_effect=fake_create_strategy,
+        ), patch(
+            "segflow4d.propagation.propagation_pipeline.create_high_res_mask",
+            return_value=_make_image_wrapper(),
+        ):
+            MockRM.return_value = MagicMock()
+            pipeline = PropagationPipeline(_make_mock_propagation_input(options))
+            pipeline._run_unidirectional_propagation(
+                tp_data=tp_data,
+                ref_input=_make_mock_ref_input(),
+                tp_list=tp_list,
+                options=options,
+            )
+
+        assert len(seen_masks) == 2, "expected one low-res and one high-res stage"
+        hr_masks = seen_masks[1]
+        assert sorted(hr_masks) == tp_list, "high-res stage did not see every TP"
+        return hr_masks
+
+    def test_masks_reach_the_high_res_stage_by_default(self):
+        hr_masks = self._hr_stage_masks(mask_high_res_registration=True)
+
+        for tp in (1, 2):
+            assert hr_masks[tp] is not None, f"TP {tp}: high-res mask missing"
+
+    def test_masks_are_withheld_when_disabled(self):
+        hr_masks = self._hr_stage_masks(mask_high_res_registration=False)
+
+        for tp, mask in hr_masks.items():
+            assert mask is None, f"TP {tp}: mask passed despite the option"
+
+    def test_default_is_masked(self):
+        assert _make_options("fireants", "sequential_star").mask_high_res_registration is True
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +361,7 @@ class TestPropagationOptionsCombo:
         )
         assert opts.propagation_strategy_combo == "sequential_star"
 
-    @pytest.mark.parametrize("combo", ["sequential_star", "sasd_star"])
+    @pytest.mark.parametrize("combo", COMBOS)
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_combo_stored_correctly(self, combo, backend):
         """Combo value set in PropagationOptions is readable unchanged."""

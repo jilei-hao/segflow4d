@@ -31,6 +31,13 @@ cyclic_time: false
 # frames are reached by one large jump backwards across frames owned by another
 # group, which propagates badly. Only meaningful for genuinely cyclic
 # acquisitions, so it is off by default.
+mask_high_res_registration: true
+# Pass the propagated masks to the high-res registration. The backend applies a
+# mask as a hard intensity multiply, with DIFFERENT masks on fixed and moving, so
+# an MSE objective can end up aligning the mask silhouettes instead of the anatomy.
+# false registers unmasked images; the masks still set the ROI-crop box. The
+# effect depends on modality (CT: lumen contrast can pull the wall; TEE: the
+# masked MSE tends to shrink it), so measure before changing the default.
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:

@@ -139,6 +139,12 @@ def parse_arguments():
                              'the end of the series and continue at timepoint 1. Needed when a '
                              'group owns frames on both sides of the wrap (e.g. ...19, 20, 1, 2); '
                              'without it those frames are reached by one large jump backwards.')
+    parser.add_argument('--mask-high-res-registration', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='Pass the propagated masks to the high-res registration (default). '
+                             'With --no-mask-high-res-registration the high-res stage registers '
+                             'unmasked images; the masks still define the ROI-crop box. See '
+                             'PropagationOptions.mask_high_res_registration for the trade-off.')
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
@@ -311,6 +317,7 @@ def main():
             propagation_strategy_combo=args.propagation_strategy_combo,
             roi_crop_padding_voxels=args.roi_crop_padding_voxels,
             cyclic_time=args.cyclic_time,
+            mask_high_res_registration=args.mask_high_res_registration,
             **cli_backend_options
         )
 
