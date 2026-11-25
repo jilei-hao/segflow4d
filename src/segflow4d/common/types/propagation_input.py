@@ -63,7 +63,16 @@ class PropagationInputFactory:
         # parse additional meshes
         _additional_meshes_ref = None
         if additional_meshes_ref is not None:
-            _additional_meshes_ref = {k: MeshWrapper(read_polydata(v)) for k, v in additional_meshes_ref.items()}
+            _additional_meshes_ref = {}
+            for k, v in additional_meshes_ref.items():
+                poly = read_polydata(v)
+                if poly.GetNumberOfPoints() == 0:
+                    raise ValueError(
+                        f"Additional mesh {k!r} read from {v} has no vertices. Check that the "
+                        f"file holds VTK PolyData: a legacy .vtk file can also hold an "
+                        f"unstructured grid, which reads as empty."
+                    )
+                _additional_meshes_ref[k] = MeshWrapper(poly)
 
         tp_input_group = TPPartitionInput(
             seg_ref=ImageWrapper(ReadImage(seg_ref_path)),
@@ -116,11 +125,12 @@ class PropagationInputFactory:
         for group in getattr(self, '_tp_input_groups', []):
             for name, mesh in (group.additional_meshes_ref or {}).items():
                 if mesh.get_data().GetNumberOfPoints() == 0:
-                    raise ValueError(
-                        f"Additional mesh {name!r} has no vertices. If it was read from "
-                        f"a file, check that the file holds VTK PolyData (a legacy .vtk "
-                        f"file can also hold an unstructured grid, which reads as empty)."
-                    )
+                    # Nothing to place or warp. An in-memory caller (e.g. avrp-handler
+                    # meshing a tiny label) may legitimately pass one, and earlier versions
+                    # let it through, so warn rather than fail. An unreadable FILE raises
+                    # in add_tp_input_group_from_disk instead.
+                    logger.warning(f"Additional mesh {name!r} has no vertices; it is propagated empty.")
+                    continue
                 check_mesh_placement(name, mesh.get_vertices(), group.seg_ref.get_data())
         return PropagationInput(
             image_4d=self._image_4d,
