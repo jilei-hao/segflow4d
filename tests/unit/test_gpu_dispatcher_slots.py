@@ -35,7 +35,7 @@ def test_a_device_takes_exactly_k_jobs(fake_gpu, k):
         d._release_device(0)
         assert d._find_available_device(0) == 0, "a released slot is reusable"
     finally:
-        d.shutdown(wait=True)
+        d.shutdown(wait=False)
 
 
 def test_default_keeps_one_job_per_device(fake_gpu):
@@ -45,7 +45,7 @@ def test_default_keeps_one_job_per_device(fake_gpu):
         assert d._find_available_device(0) == 0
         assert d._find_available_device(0) is None
     finally:
-        d.shutdown(wait=True)
+        d.shutdown(wait=False)
 
 
 def test_release_wakes_the_dispatcher_at_once(fake_gpu):
@@ -63,5 +63,25 @@ def test_release_wakes_the_dispatcher_at_once(fake_gpu):
         waiter.join()
         assert woke == [True] and time.time() - t0 < 0.2
     finally:
-        d.shutdown(wait=True)
+        d.shutdown(wait=False)
 
+
+def test_shutdown_without_wait_does_not_raise(fake_gpu):
+    """It used to iterate the pool's worker table after shutdown() had set it to None."""
+    _dispatcher(2).shutdown(wait=False)
+
+
+def test_shutdown_without_wait_terminates_live_workers(fake_gpu):
+    """sf4d-200 KNOWN_ISSUES B5: a killed run must not leave GPU workers behind."""
+    import os
+    d = _dispatcher(1)
+    pid = d._executor.submit(os.getpid).result(timeout=60)  # starts one spawn worker
+    d.shutdown(wait=False)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    pytest.fail(f"worker {pid} still alive 10 s after shutdown(wait=False)")

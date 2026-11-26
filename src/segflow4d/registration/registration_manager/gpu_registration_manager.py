@@ -498,9 +498,14 @@ class ProcessJobDispatcher:
             self._job_queue.join()
             self._executor.shutdown(wait=True)
         else:
+            # Take the worker list BEFORE shutting the pool down: shutdown() sets
+            # _processes to None. Iterating it afterwards always raised AttributeError,
+            # which callers such as the CLI's SIGTERM handler swallowed, so workers
+            # (and the GPU memory they hold) outlived a killed run
+            # (sf4d-200 KNOWN_ISSUES B5).
+            workers = list((self._executor._processes or {}).values())
             self._executor.shutdown(wait=False, cancel_futures=True)
-            # Terminate any worker processes that are still running
-            for proc in self._executor._processes.values():
+            for proc in workers:
                 try:
                     proc.terminate()
                 except Exception:
