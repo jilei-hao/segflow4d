@@ -36,6 +36,12 @@ mask_high_res_registration: true
 # false registers unmasked images; the masks still set the ROI-crop box. The
 # effect depends on modality (CT: lumen contrast can pull the wall; TEE: the
 # masked MSE tends to shrink it), so measure before changing the default.
+gpu_jobs_per_device: 1
+# Upper bound on registration jobs run at once on each GPU. 1 runs them one at a
+# time (the original behaviour). 2 cut wall time by about 20-40% on the golden cases
+# (8 GB card). Above 1, jobs are packed by their measured VRAM peaks: a large,
+# barely cropped volume still runs one job at a time when two would not fit, and a
+# job that runs out of memory next to another is retried alone.
 debug: false
 debug_dir: /path/to/debug_output
 tp_input_groups:

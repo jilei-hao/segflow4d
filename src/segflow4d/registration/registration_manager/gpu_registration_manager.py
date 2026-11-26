@@ -19,17 +19,37 @@ from multiprocessing import Queue as MPQueue
 from multiprocessing.process import BaseProcess
 from queue import Empty, Queue
 
+import numpy as np
 import torch
 
 from segflow4d.registration.registration_manager.abstract_registration_manager import AbstractRegistrationManager
 from segflow4d.registration.registration_manager.gpu_device_manager import GPUDeviceManager
 from segflow4d.registration.registration_manager.gpu_worker import (
+    JobOutcome,
     run_registration_job,
     persistent_gpu_worker,
 )
 from segflow4d.utility import device_utils
 
 logger = logging.getLogger(__name__)
+
+
+# Head-room a job needs on an idle device beyond its required_vram_mb, as before
+# (it was a literal 2048 in each dispatcher). The rule for the first job is unchanged.
+VRAM_MARGIN_MB = 2048.0
+# Head-room kept free when packing further jobs next to running ones. It is smaller
+# than VRAM_MARGIN_MB because the reservations come from measured peaks (allocator
+# plus CUDA context), not from an instantaneous free-memory reading.
+CONCURRENT_VRAM_MARGIN_MB = 512.0
+# A measured per-job peak is scaled by this before it is reserved for the next such job.
+VRAM_ESTIMATE_SAFETY = 1.10
+# Extra factor when an estimate is extrapolated from a same-method job of another size.
+VRAM_SCALED_ESTIMATE_SAFETY = 1.25
+
+
+def _is_out_of_memory(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return "out of memory" in text or "outofmemory" in text
 
 
 class ThreadJobDispatcher:
@@ -272,6 +292,19 @@ class ProcessJobDispatcher:
         # host-side prep, result packaging), and another job's GPU work can fill that.
         self._jobs_per_device = max(1, int(jobs_per_device))
         self._device_jobs: dict[int, int] = {i: 0 for i in range(self._gpu_count)}
+        # Memory-aware admission (only used when jobs_per_device > 1). A second job
+        # starts only if the VRAM reserved by the running jobs plus its own estimate
+        # fits the device's budget. The budget is the free VRAM, less a margin,
+        # measured when the device was idle, so other processes' usage is accounted
+        # for. Estimates are learned per kind of job (method + fixed-image size) from
+        # the peaks the workers report. The first job of an unknown kind runs alone.
+        # So small (cropped) jobs run side by side, and a large, barely cropped
+        # volume still runs one at a time on a moderate card.
+        self._device_reserved_mb: dict[int, float] = {i: 0.0 for i in range(self._gpu_count)}
+        self._device_budget_mb: dict[int, float] = {i: 0.0 for i in range(self._gpu_count)}
+        self._device_exclusive: dict[int, bool] = {i: False for i in range(self._gpu_count)}
+        self._device_draining: dict[int, bool] = {i: False for i in range(self._gpu_count)}
+        self._job_vram_mb: dict[tuple, float] = {}
         # Woken on submit and on release, so a waiting job is dispatched the moment
         # a slot frees up, rather than after a fixed vram_check_interval sleep (0.5 s
         # from the pipeline: about 0.25 s of idle GPU per job).
@@ -312,7 +345,9 @@ class ProcessJobDispatcher:
             'args': args,
             'kwargs': kwargs,
             'user_future': user_future,
-            'required_vram_mb': required_vram
+            'required_vram_mb': required_vram,
+            'key': self._job_key(method_name, kwargs),
+            'exclusive': False,
         }
         
         self._job_queue.put(job)
@@ -322,31 +357,107 @@ class ProcessJobDispatcher:
         
         return user_future
     
-    def _find_available_device(self, required_vram_mb: float) -> int | None:
-        """Find a device with a free job slot and sufficient VRAM."""
+    @staticmethod
+    def _job_key(method_name: str, kwargs: dict) -> tuple:
+        """Jobs with the same method and fixed-image size are assumed to need the same VRAM."""
+        img = kwargs.get('img_fixed')
+        try:
+            size = tuple(img.get_data().GetSize()) if img is not None else None
+        except Exception:
+            size = None
+        return (method_name, size)
+
+    def _estimate_mb(self, job: dict) -> float | None:
+        """VRAM to reserve for a job, or None if it must run alone (unknown kind, or a retry).
+
+        A measured peak for the same kind is used directly. Otherwise the estimate is
+        extrapolated from the largest measured job of the same method by voxel count.
+        Smaller jobs just take that job's peak, which is conservative because the CUDA
+        context does not shrink. A method never seen before runs alone once to be measured.
+        """
+        if job.get('exclusive'):
+            return None
+        method, size = job['key']
+        learned = self._job_vram_mb.get(job['key'])
+        if learned is not None:
+            estimate = learned * VRAM_ESTIMATE_SAFETY
+        else:
+            same_method = [(k[1], peak) for k, peak in self._job_vram_mb.items()
+                           if k[0] == method and k[1] is not None]
+            if size is None or not same_method:
+                return None
+            ref_size, ref_peak = max(same_method, key=lambda kv: kv[1])
+            ratio = float(np.prod(size)) / float(np.prod(ref_size))
+            estimate = ref_peak * max(1.0, ratio) * VRAM_SCALED_ESTIMATE_SAFETY
+        return max(estimate, float(job['required_vram_mb']))
+
+    def _find_available_device(self, job: dict) -> int | None:
+        """Admit a job to a device with a free slot and room for it; None if it must wait.
+
+        With jobs_per_device == 1 this is the original rule: an idle device whose
+        free VRAM, less the margin, covers the job's required_vram_mb.
+        """
+        estimate = self._estimate_mb(job) if self._jobs_per_device > 1 else 0.0
         with self._device_lock:
             for device_id in range(self._gpu_count):
-                if self._device_jobs[device_id] >= self._jobs_per_device:
+                running = self._device_jobs[device_id]
+                if running >= self._jobs_per_device:
                     continue
-                
-                mem_info = GPUDeviceManager.get_gpu_memory_usage(device_id)
-                if mem_info:
-                    safe_free = max(0, mem_info['free_mb'] - 2048)
-                    if safe_free >= required_vram_mb:
-                        self._device_jobs[device_id] += 1
-                        logger.info(f"Device {device_id} acquired ({self._device_jobs[device_id]}/"
-                                    f"{self._jobs_per_device} slots) - Free: {mem_info['free_mb']:.0f}MB, "
-                                    f"Required: {required_vram_mb}MB")
-                        return device_id
+
+                if running == 0:
+                    mem_info = GPUDeviceManager.get_gpu_memory_usage(device_id)
+                    if not mem_info:
+                        continue
+                    safe_free = max(0.0, mem_info['free_mb'] - VRAM_MARGIN_MB)
+                    if safe_free < job['required_vram_mb']:
+                        continue
+                    self._device_budget_mb[device_id] = max(
+                        0.0, mem_info['free_mb'] - CONCURRENT_VRAM_MARGIN_MB)
+                    self._device_draining[device_id] = False
+                    exclusive = self._jobs_per_device > 1 and estimate is None
+                    self._device_exclusive[device_id] = exclusive
+                    job['reservation_mb'] = 0.0 if exclusive else (estimate or 0.0)
+                else:
+                    # Joining jobs already running: only with a known estimate that fits.
+                    if self._device_exclusive[device_id] or self._device_draining[device_id]:
+                        continue
+                    if estimate is None:
+                        # Must run alone: stop admitting others here until the device drains.
+                        self._device_draining[device_id] = True
+                        logger.info(f"Device {device_id} draining for a job that runs alone "
+                                    f"({job['method_name']}, {job['key'][1]})")
+                        continue
+                    if self._device_reserved_mb[device_id] + estimate > self._device_budget_mb[device_id]:
+                        continue
+                    job['reservation_mb'] = estimate
+
+                self._device_jobs[device_id] += 1
+                self._device_reserved_mb[device_id] += job['reservation_mb']
+                logger.info(
+                    f"Device {device_id} acquired ({self._device_jobs[device_id]}/{self._jobs_per_device} slots"
+                    + (", alone" if self._device_exclusive[device_id] else
+                       f", reserved {self._device_reserved_mb[device_id]:.0f}/"
+                       f"{self._device_budget_mb[device_id]:.0f} MiB" if self._jobs_per_device > 1 else "")
+                    + f") - Required: {job['required_vram_mb']}MB")
+                return device_id
         return None
-    
-    def _release_device(self, device_id: int):
-        """Release one job slot on a device after job completion."""
+
+    def _release_device(self, device_id: int, job: dict | None = None, peak_vram_mb: float | None = None):
+        """Release one job slot on a device after job completion, and learn its VRAM peak."""
         with self._device_lock:
             self._device_jobs[device_id] = max(0, self._device_jobs[device_id] - 1)
+            if job is not None:
+                self._device_reserved_mb[device_id] = max(
+                    0.0, self._device_reserved_mb[device_id] - job.get('reservation_mb', 0.0))
+                if peak_vram_mb is not None:
+                    key = job['key']
+                    self._job_vram_mb[key] = max(self._job_vram_mb.get(key, 0.0), peak_vram_mb)
+            if self._device_jobs[device_id] == 0:
+                self._device_exclusive[device_id] = False
+                self._device_reserved_mb[device_id] = 0.0
             logger.info(f"Device {device_id} released")
         self._wakeup.set()
-    
+
     def _get_device_status(self) -> dict[int, dict]:
         """Get status of all devices."""
         status = {}
@@ -364,28 +475,40 @@ class ProcessJobDispatcher:
         with self._device_lock:
             return sum(self._jobs_per_device - n for n in self._device_jobs.values())
     
-    def _handle_job_completion(self, process_future, user_future: Future, device_id: int, method_name: str):
-        """Handle completion of a process job."""
+    def _handle_job_completion(self, process_future, job: dict, device_id: int):
+        """Handle completion of a process job: deliver the result, learn the VRAM peak,
+        and retry a job alone once if it ran out of GPU memory next to other jobs."""
+        method_name, user_future = job['method_name'], job['user_future']
         try:
-            result = process_future.result()
-            user_future.set_result(result)
-            logger.info(f"Job '{method_name}' completed successfully on GPU {device_id}")
+            outcome = process_future.result()
         except Exception as e:
+            self._release_device(device_id, job)
+            if self._jobs_per_device > 1 and not job.get('exclusive') and _is_out_of_memory(e):
+                logger.warning(f"Job '{method_name}' ran out of GPU memory alongside other jobs "
+                               f"on GPU {device_id}; retrying it alone")
+                job['exclusive'] = True
+                with self._pending_lock:
+                    self._pending_jobs.append(job)
+                self._wakeup.set()
+                return
             logger.error(f"Job '{method_name}' failed on GPU {device_id}: {e}")
             user_future.set_exception(e)
-        finally:
-            self._release_device(device_id)
-    
+            return
+        peak = outcome.peak_vram_mb if isinstance(outcome, JobOutcome) else None
+        result = outcome.result if isinstance(outcome, JobOutcome) else outcome
+        self._release_device(device_id, job, peak)
+        user_future.set_result(result)
+        logger.info(f"Job '{method_name}' completed successfully on GPU {device_id}"
+                    + (f" (peak {peak:.0f} MiB)" if peak is not None else ""))
+
     def _dispatch_job(self, job: dict) -> bool:
         """Try to dispatch a single job to an available device."""
-        required_vram = job['required_vram_mb']
-        device_id = self._find_available_device(required_vram)
+        device_id = self._find_available_device(job)
         
         if device_id is None:
             return False
         
         method_name = job['method_name']
-        user_future = job['user_future']
         
         job_data = {
             'device_id': device_id,
@@ -403,9 +526,8 @@ class ProcessJobDispatcher:
         self._future_manager.submit(
             self._handle_job_completion,
             process_future,
-            user_future,
+            job,
             device_id,
-            method_name
         )
         
         return True

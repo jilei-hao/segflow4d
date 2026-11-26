@@ -146,9 +146,9 @@ def parse_arguments():
                              'unmasked images; the masks still define the ROI-crop box. See '
                              'PropagationOptions.mask_high_res_registration for the trade-off.')
     parser.add_argument('--gpu-jobs-per-device', type=int, default=1,
-                        help='Registration jobs run concurrently on each GPU (default 1). '
-                             'Overlaps one job\'s host-side work with another\'s GPU work; '
-                             'each extra job costs a CUDA context plus its working set in VRAM.')
+                        help='Upper bound on registration jobs run at once on each GPU (default 1). '
+                             'Above 1, jobs are packed by their measured VRAM peaks, so large '
+                             'volumes still run one at a time when two would not fit.')
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()

@@ -45,11 +45,21 @@ class PropagationOptions:
     # restricts the registration to the root, so the mask is largely redundant.
     # Masks are still used for the ROI crop bbox regardless of this setting.
     mask_high_res_registration: bool = True
-    # Registration jobs run concurrently on each GPU (process-pool dispatcher). 1
-    # keeps the original one-at-a-time behaviour. A job spends much of its time off
-    # the GPU (IPC, host-side prep and post-processing), and another job's GPU work
-    # can fill that time. Each extra job costs one more CUDA context plus its working
-    # set in VRAM.
+    # Upper bound on registration jobs run at once on each GPU (process-pool
+    # dispatcher). 1 keeps the original one-at-a-time behaviour. A job spends much of
+    # its time off the GPU (IPC, host-side prep and post-processing), and another
+    # job's GPU work can fill that time.
+    #
+    # Above 1, packing is memory-aware, so the same setting is safe for small and
+    # large volumes. Each worker reports its job's VRAM peak (allocator plus CUDA
+    # context). A further job joins only if the measured, or extrapolated, peaks of
+    # the jobs on the device fit the free VRAM seen when it was idle, less 512 MB.
+    # The first job of a new kind runs alone to be measured. A job that still runs out
+    # of memory next to others is retried alone. Measured on an 8 GB card (bavcta005):
+    #   ROI crop 16: 172 s at 1, 135 s at 2.
+    #   ROI crop 64: 248 s at 1, 216 s at 2.
+    #   ROI crop 64 with ~5 GB free: completes at 2, by running big jobs alone; a
+    #   fixed two-at-a-time dispatcher ran out of memory.
     gpu_jobs_per_device: int = 1
 
     def __post_init__(self):

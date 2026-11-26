@@ -7,9 +7,40 @@ These functions must be at module level for pickling by ProcessPoolExecutor.
 import gc
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Assumed CUDA context footprint when NVML cannot attribute memory to this process
+# (e.g. a PID namespace hides it). Measured at about 300-450 MiB on an RTX 2080.
+DEFAULT_CONTEXT_MB = 500.0
+
+
+@dataclass
+class JobOutcome:
+    """What a worker returns: the handler's result plus the job's measured VRAM peak.
+
+    peak_vram_mb is the allocator's peak reservation during the job plus this
+    process's CUDA context, i.e. what the job needs on the device. The dispatcher
+    uses it to decide how many jobs fit at once (gpu_jobs_per_device > 1).
+    """
+    result: Any
+    peak_vram_mb: float | None = None
+
+
+def _context_overhead_mb(torch) -> float:
+    """GPU memory this process holds beyond what the torch allocator has reserved."""
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
+        for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+            if proc.pid == os.getpid() and proc.usedGpuMemory:
+                return max(0.0, proc.usedGpuMemory / 2**20 - torch.cuda.memory_reserved() / 2**20)
+    except Exception:  # NVML missing, or the process is not visible to it
+        pass
+    return DEFAULT_CONTEXT_MB
 
 
 def gpu_worker_init(device_id: int, registration_backend: str):
@@ -94,12 +125,19 @@ def run_registration_job(job_data: dict) -> Any:
         if run_fn is None:
             raise ValueError(f"Unknown method: {method_name}")
         
-        # Execute
+        # Execute, measuring the job's VRAM peak (see JobOutcome)
+        cuda = torch.cuda.is_available()
+        if cuda:
+            torch.cuda.reset_peak_memory_stats()
         result = run_fn(*args, **kwargs)
+        peak_vram_mb = None
+        if cuda:
+            peak_vram_mb = torch.cuda.max_memory_reserved() / 2**20 + _context_overhead_mb(torch)
         
-        logger.info(f"[PID {os.getpid()}] Completed '{method_name}' on GPU {device_id}")
+        logger.info(f"[PID {os.getpid()}] Completed '{method_name}' on GPU {device_id}"
+                    + (f" (peak {peak_vram_mb:.0f} MiB)" if peak_vram_mb is not None else ""))
         
-        return result
+        return JobOutcome(result=result, peak_vram_mb=peak_vram_mb)
         
     except Exception as e:
         logger.error(f"[PID {os.getpid()}] Error on GPU {device_id}: {e}", exc_info=True)
