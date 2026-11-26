@@ -479,7 +479,39 @@ class PropagationPipeline:
         return result
     
 
-    def write_results_to_disk(self, all_tp_output: dict[int, TPData]):
+    def _image_4d_path(self) -> str:
+        return os.path.join(self._options.output_directory, "image-4d.nii.gz")
+
+    def _submit_image_4d_write(self) -> list[int]:
+        """Queue image-4d.nii.gz for writing now, before any registration runs.
+
+        image-4d depends only on the input frames of the timepoints that will be
+        output. Written at the end, gzip-encoding it took ~34 s on a 20-frame CT, all
+        of it after the GPU work had finished. Queued here, the async writer encodes it
+        while registration runs: SimpleITK releases the GIL while it writes, so the
+        dispatcher is not held up. The frames and their order are exactly what
+        write_results_to_disk would use: every member of a group with at least one
+        target, sorted. Returns those timepoints, so the end of the run can confirm
+        they match the output.
+        """
+        frames: dict[int, ImageWrapper] = {}
+        for tp_partition in self._tp_partitions or []:
+            members = set(tp_partition._input.tp_target) | {tp_partition._input.tp_ref}
+            if len(members) < 2:
+                continue  # a reference with no targets produces no output
+            for tp in members:
+                frames[tp] = tp_partition._tp_data[tp].image
+        tps = sorted(frames)
+        if not tps:
+            return tps
+        os.makedirs(self._options.output_directory, exist_ok=True)
+        image_4d = create_image_helper().create_4d_image([frames[tp] for tp in tps])
+        async_writer.submit_image(image_4d, self._image_4d_path())
+        logger.info(f"image-4d queued for writing early ({len(tps)} timepoints)")
+        return tps
+
+    def write_results_to_disk(self, all_tp_output: dict[int, TPData],
+                              image_4d_written_for: list[int] | None = None):
         if self._tp_partitions is None:
             raise RuntimeError("No timepoint partitions available for writing results.")
 
@@ -500,15 +532,18 @@ class PropagationPipeline:
                 logger.error(f"Segmentation for time point {tp} is None, cannot write to disk.")
                 raise RuntimeError(f"Segmentation for time point {tp} is None.")
 
-        # Write images
+        # Write images. image-4d is normally already queued (see
+        # _submit_image_4d_write); it is written here only if that did not cover
+        # exactly the output timepoints.
         ih = create_image_helper()
-        image_4d = ih.create_4d_image(tp_images)
+        if image_4d_written_for != sorted(all_tp_output.keys()):
+            if image_4d_written_for:
+                logger.warning(
+                    f"image-4d was queued early for {image_4d_written_for} but the output "
+                    f"holds {sorted(all_tp_output.keys())}; rewriting it."
+                )
+            async_writer.submit_image(ih.create_4d_image(tp_images), self._image_4d_path())
         seg_4d = ih.create_4d_image(tp_segmentations)
-
-        async_writer.submit_image(
-            image_4d,
-            os.path.join(self._options.output_directory, "image-4d.nii.gz")
-        )
 
         async_writer.submit_image(
             seg_4d,
@@ -556,6 +591,8 @@ class PropagationPipeline:
     def run(self):
         self._validate_input()
         self._prepare_data()
+        early_image_4d_tps = (self._submit_image_4d_write()
+                              if self._options.write_result_to_disk else None)
 
         if self._tp_partitions is None:
             raise RuntimeError("No timepoint partitions available for processing.")
@@ -573,7 +610,7 @@ class PropagationPipeline:
                 all_tp_output[tp] = tp_data
 
         if self._options.write_result_to_disk:
-            self.write_results_to_disk(all_tp_output)
+            self.write_results_to_disk(all_tp_output, image_4d_written_for=early_image_4d_tps)
 
         logger.info("Propagation pipeline completed successfully.")
         return all_tp_output
