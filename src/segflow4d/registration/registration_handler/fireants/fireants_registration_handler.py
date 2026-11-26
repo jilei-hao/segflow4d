@@ -209,11 +209,13 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 resliced_tensor = moved_resliced[0].detach().cpu().numpy().copy()
 
                 mesh_warp_field = None
-                mesh_warp_image = None
                 if need_warp_field:
                     logger.info("Computing inverse warp field for mesh reslicing...")
                     mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
-                    mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
+                    # No warp_image is returned: nothing downstream reads TPData.warp_image,
+                    # and building it copied the full inverse field off the GPU, converted
+                    # it to SimpleITK and pickled it back to the parent on every job
+                    # (sf4d-200 profiling: most of the ~0.5 s per job spent on results).
 
                 if mesh_to_reslice is not None:
                     logger.info("Reslicing target mesh...")
@@ -269,7 +271,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 resliced_image=ImageWrapper(resliced_itk),
                 resliced_segmentation_mesh=resliced_seg_mesh,
                 resliced_meshes=resliced_additional_meshes,
-                warp_image=mesh_warp_image
+                warp_image=None
             )
 
         except Exception as e:
@@ -522,11 +524,13 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 # an internal GreedyRegistration with scales [8,4,2,1]; this fails when
                 # image dimensions are too small for the FFT-based downsampling path.
                 mesh_warp_field = None
-                mesh_warp_image = None
                 if need_warp_field:
                     logger.info("Computing inverse warp field for mesh reslicing...")
                     mesh_warp_field = deformable_reg.get_inverse_warped_coordinates(batch_fixed_def, batch_moving_def, None)
-                    mesh_warp_image = self._get_warp_image_from_tensor(mesh_warp_field, img_fixed)
+                    # No warp_image is returned: nothing downstream reads TPData.warp_image,
+                    # and building it copied the full inverse field off the GPU, converted
+                    # it to SimpleITK and pickled it back to the parent on every job
+                    # (sf4d-200 profiling: most of the ~0.5 s per job spent on results).
 
                 # Reslice mesh
                 if mesh_to_reslice is not None:
@@ -616,7 +620,7 @@ class FireantsRegistrationHandler(AbstractRegistrationHandler):
                 resliced_image=ImageWrapper(resliced_itk),
                 resliced_segmentation_mesh=resliced_seg_mesh,
                 resliced_meshes=resliced_additional_meshes,
-                warp_image=mesh_warp_image
+                warp_image=None
             )
         
         except Exception as e:
