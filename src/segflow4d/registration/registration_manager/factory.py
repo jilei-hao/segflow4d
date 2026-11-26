@@ -42,7 +42,8 @@ class RegistrationManagerFactory:
                vram_check_interval: float = 0.1,
                use_processes: bool = True,
                use_persistent_workers: bool = False,
-               force_cpu: bool = False) -> AbstractRegistrationManager:
+               force_cpu: bool = False,
+               jobs_per_device: int = 1) -> AbstractRegistrationManager:
         """
         Create a registration manager based on the backend type and hardware.
 
@@ -55,6 +56,7 @@ class RegistrationManagerFactory:
                 context conflicts between jobs).
             use_persistent_workers: Keep GPU worker processes alive between jobs.
             force_cpu: Force CPU manager even if GPU is available and backend supports GPU.
+            jobs_per_device: Jobs run concurrently on each GPU; GPU manager only.
 
         Returns:
             An :class:`AbstractRegistrationManager` appropriate for the backend and hardware.
@@ -85,6 +87,7 @@ class RegistrationManagerFactory:
             vram_check_interval=vram_check_interval,
             use_processes=use_processes,
             use_persistent_workers=use_persistent_workers,
+            jobs_per_device=jobs_per_device,
         )
 
 
@@ -105,7 +108,8 @@ class RegistrationManager:
                 vram_check_interval: float = 0.1,
                 use_processes: bool = True,
                 use_persistent_workers: bool = False,
-                force_cpu: bool = False):
+                force_cpu: bool = False,
+                jobs_per_device: int = 1):
         if cls._instance is None:
             cls._instance = super(RegistrationManager, cls).__new__(cls)
         return cls._instance
@@ -116,7 +120,8 @@ class RegistrationManager:
                  vram_check_interval: float = 0.1,
                  use_processes: bool = True,
                  use_persistent_workers: bool = False,
-                 force_cpu: bool = False):
+                 force_cpu: bool = False,
+                 jobs_per_device: int = 1):
         """
         Initialize the registration manager singleton.
         
@@ -142,7 +147,8 @@ class RegistrationManager:
             vram_check_interval=vram_check_interval,
             use_processes=use_processes,
             use_persistent_workers=use_persistent_workers,
-            force_cpu=force_cpu
+            force_cpu=force_cpu,
+            jobs_per_device=jobs_per_device,
         )
         
         RegistrationManager._initialized = True

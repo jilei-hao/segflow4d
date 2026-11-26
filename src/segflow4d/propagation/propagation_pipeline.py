@@ -38,7 +38,8 @@ class PropagationPipeline:
         self._registration_manager = RegistrationManager(
             registration_backend=self._options.registration_backend,
             required_vram_mb=input.options.minimum_required_vram_gb * 1024,  # 10G
-            vram_check_interval=0.5  # seconds
+            vram_check_interval=0.5,  # seconds
+            jobs_per_device=self._options.gpu_jobs_per_device,
         )
 
     def _validate_input(self):
@@ -599,9 +600,19 @@ class PropagationPipeline:
         
         partition_results = list[dict[int, TPData]]()
 
-        for tp_partition in self._tp_partitions:
-            crnt_result = self._run_partition(tp_partition)
-            partition_results.append(crnt_result)
+        if self._options.gpu_jobs_per_device > 1 and len(self._tp_partitions) > 1:
+            # Partitions are independent, so let their chains share the GPU slots.
+            # One at a time, a 3-chain case keeps a slot idle whenever only one chain
+            # is left. map() keeps partition order, so all_tp_output is assembled
+            # exactly as in the sequential path.
+            logger.info(f"Running {len(self._tp_partitions)} partitions concurrently "
+                        f"({self._options.gpu_jobs_per_device} jobs per GPU)")
+            with ThreadPoolExecutor(max_workers=len(self._tp_partitions)) as executor:
+                partition_results.extend(executor.map(self._run_partition, self._tp_partitions))
+        else:
+            for tp_partition in self._tp_partitions:
+                crnt_result = self._run_partition(tp_partition)
+                partition_results.append(crnt_result)
 
         # create all tp output
         all_tp_output = dict[int, TPData]()

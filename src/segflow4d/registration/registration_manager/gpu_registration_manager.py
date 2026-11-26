@@ -259,7 +259,7 @@ class ProcessJobDispatcher:
     """
     
     def __init__(self, registration_backend: str, required_vram_mb: float, 
-                 vram_check_interval: float, max_workers: int):
+                 vram_check_interval: float, max_workers: int, jobs_per_device: int = 1):
         self._registration_backend = registration_backend
         self._required_vram_mb = required_vram_mb
         self._vram_check_interval = vram_check_interval
@@ -267,18 +267,26 @@ class ProcessJobDispatcher:
         self._job_queue: Queue = Queue()
         self._gpu_count = GPUDeviceManager.get_gpu_count()
         self._device_lock = threading.Lock()
-        self._device_busy: dict[int, bool] = {i: False for i in range(self._gpu_count)}
+        # Jobs running per device. Up to jobs_per_device run at once on one GPU, each
+        # in its own worker process. A job spends much of its time off the GPU (IPC,
+        # host-side prep, result packaging), and another job's GPU work can fill that.
+        self._jobs_per_device = max(1, int(jobs_per_device))
+        self._device_jobs: dict[int, int] = {i: 0 for i in range(self._gpu_count)}
+        # Woken on submit and on release, so a waiting job is dispatched the moment
+        # a slot frees up, rather than after a fixed vram_check_interval sleep (0.5 s
+        # from the pipeline: about 0.25 s of idle GPU per job).
+        self._wakeup = threading.Event()
         
         self._pending_jobs: list[dict] = []
         self._pending_lock = threading.Lock()
         
         self._mp_context = mp.get_context('spawn')
         self._executor = ProcessPoolExecutor(
-            max_workers=max_workers,
+            max_workers=max_workers * self._jobs_per_device,
             mp_context=self._mp_context
         )
         
-        self._future_manager = ThreadPoolExecutor(max_workers=max_workers * 2, 
+        self._future_manager = ThreadPoolExecutor(max_workers=max_workers * self._jobs_per_device * 2, 
                                                    thread_name_prefix="FutureManager")
         
         self._running = True
@@ -289,20 +297,15 @@ class ProcessJobDispatcher:
         self._fatal_error_lock = threading.Lock()
         
         logger.info(f"ProcessJobDispatcher started - GPUs: {self._gpu_count}, Max workers: {max_workers}, "
-                   f"Required VRAM: {required_vram_mb}MB")
+                   f"jobs per GPU: {self._jobs_per_device}, Required VRAM: {required_vram_mb}MB")
     
     def submit(self, method_name: str, args: tuple, kwargs: dict) -> Future:
         """Submit a job to the queue."""
         user_future = Future()
         required_vram = kwargs.pop('required_vram_mb', self._required_vram_mb)
-        
-        try:
-            pickle.dumps(args)
-            pickle.dumps(kwargs)
-        except Exception as e:
-            logger.error(f"Job arguments are not picklable: {e}")
-            user_future.set_exception(ValueError(f"Job arguments must be picklable for process execution: {e}"))
-            return user_future
+        # No dry-run pickle here: the process pool pickles the arguments to send them
+        # anyway, and a pickling failure reaches user_future through the process
+        # future. A dry run serialised every job's images twice on the submitting thread.
         
         job = {
             'method_name': method_name,
@@ -315,31 +318,34 @@ class ProcessJobDispatcher:
         self._job_queue.put(job)
         logger.info(f"Job queued: {method_name} (queue size: {self._job_queue.qsize()}, "
                    f"required VRAM: {required_vram}MB)")
+        self._wakeup.set()
         
         return user_future
     
     def _find_available_device(self, required_vram_mb: float) -> int | None:
-        """Find a device that is not busy and has sufficient VRAM."""
+        """Find a device with a free job slot and sufficient VRAM."""
         with self._device_lock:
             for device_id in range(self._gpu_count):
-                if self._device_busy[device_id]:
+                if self._device_jobs[device_id] >= self._jobs_per_device:
                     continue
                 
                 mem_info = GPUDeviceManager.get_gpu_memory_usage(device_id)
                 if mem_info:
                     safe_free = max(0, mem_info['free_mb'] - 2048)
                     if safe_free >= required_vram_mb:
-                        self._device_busy[device_id] = True
-                        logger.info(f"Device {device_id} acquired - Free: {mem_info['free_mb']:.0f}MB, "
-                                   f"Required: {required_vram_mb}MB")
+                        self._device_jobs[device_id] += 1
+                        logger.info(f"Device {device_id} acquired ({self._device_jobs[device_id]}/"
+                                    f"{self._jobs_per_device} slots) - Free: {mem_info['free_mb']:.0f}MB, "
+                                    f"Required: {required_vram_mb}MB")
                         return device_id
         return None
     
     def _release_device(self, device_id: int):
-        """Release a device after job completion."""
+        """Release one job slot on a device after job completion."""
         with self._device_lock:
-            self._device_busy[device_id] = False
+            self._device_jobs[device_id] = max(0, self._device_jobs[device_id] - 1)
             logger.info(f"Device {device_id} released")
+        self._wakeup.set()
     
     def _get_device_status(self) -> dict[int, dict]:
         """Get status of all devices."""
@@ -348,7 +354,7 @@ class ProcessJobDispatcher:
             for device_id in range(self._gpu_count):
                 mem_info = GPUDeviceManager.get_gpu_memory_usage(device_id)
                 status[device_id] = {
-                    'busy': self._device_busy[device_id],
+                    'busy': self._device_jobs[device_id] >= self._jobs_per_device,
                     'memory': mem_info
                 }
         return status
@@ -356,7 +362,7 @@ class ProcessJobDispatcher:
     def _get_available_device_count(self) -> int:
         """Get number of devices that are not busy."""
         with self._device_lock:
-            return sum(1 for busy in self._device_busy.values() if not busy)
+            return sum(self._jobs_per_device - n for n in self._device_jobs.values())
     
     def _handle_job_completion(self, process_future, user_future: Future, device_id: int, method_name: str):
         """Handle completion of a process job."""
@@ -426,7 +432,8 @@ class ProcessJobDispatcher:
                         break
                 
                 if not jobs_to_dispatch:
-                    time.sleep(0.05)
+                    self._wakeup.wait(0.05)
+                    self._wakeup.clear()
                     continue
                 
                 undispatched = []
@@ -452,8 +459,11 @@ class ProcessJobDispatcher:
                                            f"Usage: {mem['usage_percent']:.1f}%, required: {self._required_vram_mb}MB")
                         
                         logger.debug(f"No device available. {len(undispatched)} jobs pending. "
-                                   f"Waiting {self._vram_check_interval}s...")
-                        time.sleep(self._vram_check_interval)
+                                   f"Waiting up to {self._vram_check_interval}s...")
+                        # Woken at once when a slot is released or a job arrives; the
+                        # timeout only paces re-checks when VRAM (not a slot) is short.
+                        self._wakeup.wait(self._vram_check_interval)
+                        self._wakeup.clear()
                     else:
                         time.sleep(0.01)
                 else:
@@ -730,7 +740,8 @@ class GPURegistrationManager(AbstractRegistrationManager):
                  required_vram_mb: float = 10240,
                  vram_check_interval: float = 0.1,
                  use_processes: bool = True,
-                 use_persistent_workers: bool = False):
+                 use_persistent_workers: bool = False,
+                 jobs_per_device: int = 1):
         """
         Initialize GPU registration manager.
         
@@ -742,6 +753,7 @@ class GPURegistrationManager(AbstractRegistrationManager):
             vram_check_interval: Interval for checking VRAM availability.
             use_processes: Use process-based execution (recommended).
             use_persistent_workers: Use persistent worker processes (reduces overhead).
+            jobs_per_device: Jobs run concurrently on each GPU (process pool only).
         """
         if not device_utils.is_accelerator_available():
             raise RuntimeError(
@@ -784,7 +796,8 @@ class GPURegistrationManager(AbstractRegistrationManager):
                 registration_backend=registration_backend,
                 required_vram_mb=required_vram_mb,
                 vram_check_interval=vram_check_interval,
-                max_workers=max_workers
+                max_workers=max_workers,
+                jobs_per_device=jobs_per_device,
             )
             mode = "ProcessPool"
         else:

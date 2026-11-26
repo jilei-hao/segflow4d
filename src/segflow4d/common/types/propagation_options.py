@@ -45,6 +45,12 @@ class PropagationOptions:
     # restricts the registration to the root, so the mask is largely redundant.
     # Masks are still used for the ROI crop bbox regardless of this setting.
     mask_high_res_registration: bool = True
+    # Registration jobs run concurrently on each GPU (process-pool dispatcher). 1
+    # keeps the original one-at-a-time behaviour. A job spends much of its time off
+    # the GPU (IPC, host-side prep and post-processing), and another job's GPU work
+    # can fill that time. Each extra job costs one more CUDA context plus its working
+    # set in VRAM.
+    gpu_jobs_per_device: int = 1
 
     def __post_init__(self):
         pass

@@ -145,6 +145,10 @@ def parse_arguments():
                              'With --no-mask-high-res-registration the high-res stage registers '
                              'unmasked images; the masks still define the ROI-crop box. See '
                              'PropagationOptions.mask_high_res_registration for the trade-off.')
+    parser.add_argument('--gpu-jobs-per-device', type=int, default=1,
+                        help='Registration jobs run concurrently on each GPU (default 1). '
+                             'Overlaps one job\'s host-side work with another\'s GPU work; '
+                             'each extra job costs a CUDA context plus its working set in VRAM.')
     parser.add_argument('--config', type=str, default='', help='Path to YAML configuration file')
     
     args = parser.parse_args()
@@ -213,6 +217,7 @@ def main():
             roi_crop_padding_voxels=config.get('roi_crop_padding_voxels', 0),
             cyclic_time=config.get('cyclic_time', False),
             mask_high_res_registration=config.get('mask_high_res_registration', True),
+            gpu_jobs_per_device=config.get('gpu_jobs_per_device', 1),
             **backend_options
         )
         
@@ -318,6 +323,7 @@ def main():
             roi_crop_padding_voxels=args.roi_crop_padding_voxels,
             cyclic_time=args.cyclic_time,
             mask_high_res_registration=args.mask_high_res_registration,
+            gpu_jobs_per_device=args.gpu_jobs_per_device,
             **cli_backend_options
         )
 
